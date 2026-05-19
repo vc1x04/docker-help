@@ -26,7 +26,6 @@ jobs:
         id: check
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          # 直接用 gh release view 检查 Tag 是否存在（不存在会返回非零）
           if gh release view "$VERSION" --json tagName &>/dev/null; then
             echo "Version ${VERSION} already has a release. No release needed."
             echo "exists=true" >> $GITHUB_OUTPUT
@@ -34,6 +33,22 @@ jobs:
             echo "New version ${VERSION} detected. Will create release."
             echo "exists=false" >> $GITHUB_OUTPUT
           fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch upstream changelog
+        if: steps.check.outputs.exists == 'false'
+        id: changelog
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          # 调用 GitHub API 获取 AdGuardHome 仓库该版本的 Release 信息
+          CHANGELOG=$(gh api "repos/AdguardTeam/AdGuardHome/releases/tags/${VERSION}" --jq '.body' 2>/dev/null || echo "")
+          if [ -z "$CHANGELOG" ]; then
+            CHANGELOG="No official changelog found for this version. Built from upstream Docker image \`adguard/adguardhome:${VERSION}\`."
+          fi
+          # 将日志内容写入文件，避免特殊字符在 shell 中解析错误
+          echo "$CHANGELOG" > /tmp/changelog.md
+          echo "changelog_file=/tmp/changelog.md" >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -49,6 +64,7 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.version }}
           name: AdGuard Home ${{ steps.version.outputs.version }}
+          body_path: ${{ steps.changelog.outputs.changelog_file }}
           files: adguardhome-${{ steps.version.outputs.version }}.tar
           draft: false
           prerelease: false
