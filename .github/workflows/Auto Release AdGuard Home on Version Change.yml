@@ -18,8 +18,7 @@ jobs:
       - name: Extract upstream version
         id: version
         run: |
-          FULL_VERSION=$(docker run --rm adguard/adguardhome:latest --version)
-          VERSION=$(echo "$FULL_VERSION" | grep -oP 'v[\d.]+' | head -1)
+          VERSION=$(docker run --rm adguard/adguardhome:latest --version | awk '{print $NF}')
           echo "Detected upstream version: $VERSION"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
@@ -27,9 +26,9 @@ jobs:
         id: check
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          EXISTING=$(gh release list --limit 1000 --json tagName -q '.[].tagName' | grep -E -- "-${VERSION}$" || true)
-          if [ -n "$EXISTING" ]; then
-            echo "Version ${VERSION} already exists (tag: $EXISTING). No release needed."
+          # 直接用 gh release view 检查 Tag 是否存在（不存在会返回非零）
+          if gh release view "$VERSION" --json tagName &>/dev/null; then
+            echo "Version ${VERSION} already has a release. No release needed."
             echo "exists=true" >> $GITHUB_OUTPUT
           else
             echo "New version ${VERSION} detected. Will create release."
@@ -38,28 +37,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Generate date-based tag
-        if: steps.check.outputs.exists == 'false'
-        id: tag
-        run: |
-          DATE_TAG=$(date +'%Y%m%d')
-          COMBINED_TAG="${DATE_TAG}-${{ steps.version.outputs.version }}"
-          echo "Generated tag: $COMBINED_TAG"
-          echo "tag=$COMBINED_TAG" >> $GITHUB_OUTPUT
-
       - name: Save Docker image
         if: steps.check.outputs.exists == 'false'
         run: |
-          docker save -o adguardhome-${{ steps.tag.outputs.tag }}.tar \
+          docker save -o adguardhome-${{ steps.version.outputs.version }}.tar \
             adguard/adguardhome:latest
 
       - name: Create Release and Upload Asset
         if: steps.check.outputs.exists == 'false'
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: AdGuard Home ${{ steps.version.outputs.version }} (build ${{ steps.tag.outputs.tag }})
-          files: adguardhome-${{ steps.tag.outputs.tag }}.tar
+          tag_name: ${{ steps.version.outputs.version }}
+          name: AdGuard Home ${{ steps.version.outputs.version }}
+          files: adguardhome-${{ steps.version.outputs.version }}.tar
           draft: false
           prerelease: false
         env:
