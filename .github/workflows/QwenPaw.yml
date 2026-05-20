@@ -1,0 +1,68 @@
+name: Auto Release QwenPaw on Version Change
+
+on:
+  schedule:
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  IMAGE: "agentscope/qwenpaw:latest"
+  PROJ_NAME: "QwenPaw"
+  FILE_PREFIX: "qwenpaw"
+  VERSION_LABEL: ""
+  VERSION_CMD: "python -c 'import qwenpaw; print(qwenpaw.__version__)'"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pull latest image
+        run: docker pull $IMAGE
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(docker inspect $IMAGE --format '{{index .Config.Labels "${{ env.VERSION_LABEL }}"}}' 2>/dev/null)
+          if [ -z "$VERSION" ] && [ -n "$VERSION_CMD" ]; then
+            VERSION=$(docker run --rm $IMAGE $VERSION_CMD 2>&1 | grep -oP 'v?[\d.]+' | head -1)
+          fi
+          if [ -z "$VERSION" ]; then
+            echo "Error: Cannot extract version from image $IMAGE"
+            exit 1
+          fi
+          echo "Detected version: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Check if this version already released
+        id: check
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if gh release view "$VERSION" --json tagName &>/dev/null; then
+            echo "Version ${VERSION} already has a release. No release needed."
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "New version ${VERSION} detected. Will create release."
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Save Docker image
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          docker save -o $FILE_PREFIX-${{ steps.version.outputs.version }}.tar $IMAGE
+
+      - name: Create Release and Upload Asset
+        if: steps.check.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: ${{ env.PROJ_NAME }} ${{ steps.version.outputs.version }}
+          files: ${{ env.FILE_PREFIX }}-${{ steps.version.outputs.version }}.tar
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
