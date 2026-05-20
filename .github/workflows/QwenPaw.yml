@@ -12,8 +12,7 @@ env:
   IMAGE: "agentscope/qwenpaw:latest"
   PROJ_NAME: "QwenPaw"
   FILE_PREFIX: "qwenpaw"
-  VERSION_LABEL: ""
-  VERSION_CMD: "python -c 'import qwenpaw; print(qwenpaw.__version__)'"
+  VERSION_LABEL: ""        # 仍禁用 Label，使用命令提取
 
 jobs:
   release:
@@ -25,14 +24,10 @@ jobs:
       - name: Extract version
         id: version
         run: |
-          VERSION=$(docker inspect $IMAGE --format '{{index .Config.Labels "${{ env.VERSION_LABEL }}"}}' 2>/dev/null)
-          if [ -z "$VERSION" ] && [ -n "$VERSION_CMD" ]; then
-            VERSION=$(docker run --rm $IMAGE $VERSION_CMD 2>&1 | grep -oP 'v?[\d.]+' | head -1)
-          fi
-          if [ -z "$VERSION" ]; then
-            echo "Error: Cannot extract version from image $IMAGE"
-            exit 1
-          fi
+          # 获取 __version__，可能为 "1.1.8" 或 "v1.1.8"
+          RAW_VERSION=$(docker run --rm $IMAGE python -c "import qwenpaw; print(qwenpaw.__version__)" 2>/dev/null)
+          # 去掉可能的前导 v，再统一加上 v，例如 v1.1.8
+          VERSION="v${RAW_VERSION#v}"
           echo "Detected version: $VERSION"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
