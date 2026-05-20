@@ -2,7 +2,7 @@ name: Auto Release QwenPaw on Version Change
 
 on:
   schedule:
-    - cron: '0 18 * * *'
+    - cron: '0 18 * * *'   # 北京时间每天凌晨2点
   workflow_dispatch:
 
 permissions:
@@ -50,10 +50,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Save Docker image
+      - name: Save and compress Docker image
         if: steps.check.outputs.exists == 'false'
         run: |
-          docker save -o $FILE_PREFIX-${{ steps.version.outputs.version }}.tar $IMAGE
+          docker save $IMAGE | gzip > $FILE_PREFIX-${{ steps.version.outputs.version }}.tar.gz
 
       - name: Create Release and Upload Asset
         if: steps.check.outputs.exists == 'false'
@@ -61,7 +61,7 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.version }}
           name: ${{ env.PROJ_NAME }} ${{ steps.version.outputs.version }}
-          files: ${{ env.FILE_PREFIX }}-${{ steps.version.outputs.version }}.tar
+          files: ${{ env.FILE_PREFIX }}-${{ steps.version.outputs.version }}.tar.gz
           draft: false
           prerelease: false
         env:
