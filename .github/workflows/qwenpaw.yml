@@ -1,76 +1,79 @@
-name: 检查Docker镜像更新并自动发布Release
+name: 检查Docker镜像latest更新并自动发布
 
 on:
   schedule:
-    # 每天 UTC 时间 18:00 执行 (即北京时间凌晨 2:00)
+    # 每天 UTC 18:00 (北京时间凌晨 2:00) 执行
     - cron: '0 18 * * *'
-  workflow_dispatch: # 允许手动触发，方便测试
+  workflow_dispatch: # 允许手动触发
 
 jobs:
   check-and-release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # 用于创建 Release
+      contents: write
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 安装 jq 工具
-        run: sudo apt-get update && sudo apt-get install -y jq
-
-      - name: 获取上游Docker镜像的最新标签
-        id: check_upstream
+      - name: 获取 latest 镜像的 Digest (指纹)
+        id: get_digest
         run: |
-          # 1. 定义要检查的Docker镜像名称
           DOCKER_IMAGE="agentscope/qwenpaw"
-
-          # 2. 调用 Docker Hub API 获取镜像标签
-          echo "正在检查镜像: $DOCKER_IMAGE"
-          RESPONSE=$(curl -s "https://hub.docker.com/v2/repositories/${DOCKER_IMAGE}/tags/?page_size=5&ordering=-last_updated")
+          echo "正在获取 $DOCKER_IMAGE:latest 的真实指纹..."
           
-          # 3. 使用 jq 解析 JSON 响应，提取最新的标签名
-          # 排除 'latest', 'main', 'master' 等浮动标签，只取第一个语义化版本号
-          TAG=$(echo "$RESPONSE" | jq -r '.results[] | select(.name != "latest" and .name != "main") | .name' | head -1)
+          # 调用 Docker Hub API 获取 latest 标签对应的真实镜像 Digest
+          DIGEST=$(curl -s "https://hub.docker.com/v2/repositories/${DOCKER_IMAGE}/tags/latest" | jq -r '.images[0].digest')
           
-          # 4. 检查是否成功获取到标签
-          if [ -z "$TAG" ]; then
-            echo "错误：未能从Docker Hub获取到最新标签。"
+          if [ -z "$DIGEST" ] || [ "$DIGEST" = "null" ]; then
+            echo "错误：未能获取到 latest 镜像的 Digest。"
             exit 1
           fi
           
-          echo "上游镜像最新标签: $TAG"
-          # 将提取到的标签名作为步骤输出
-          echo "UPSTREAM_TAG=$TAG" >> $GITHUB_OUTPUT
-
-      - name: 检查是否已存在对应Release
-        id: check_release
-        if: steps.check_upstream.outputs.UPSTREAM_TAG != ''
-        run: |
-          UPSTREAM_TAG=${{ steps.check_upstream.outputs.UPSTREAM_TAG }}
-          RELEASE_TAG="v${UPSTREAM_TAG}"
-          echo "检查Release '${RELEASE_TAG}' 是否已存在..."
+          # 提取 Digest 的前 12 位作为唯一标识（例如 sha256:abc123... -> abc123456789）
+          SHORT_DIGEST=$(echo $DIGEST | cut -c8-19)
+          echo "latest 镜像指纹: $SHORT_DIGEST"
           
-          # 使用 GitHub CLI (gh) 检查该版本标签的Release是否存在
-          if gh release view "${RELEASE_TAG}" --repo ${{ github.repository }} > /dev/null 2>&1; then
-            echo "Release '${RELEASE_TAG}' 已存在，跳过创建。"
+          # 将完整指纹和短指纹保存为输出变量
+          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+          echo "short_digest=$SHORT_DIGEST" >> $GITHUB_OUTPUT
+
+      - name: 生成基于日期的版本号
+        id: generate_version
+        run: |
+          # 使用当天的日期作为版本号 (格式: v2026.05.21)
+          VERSION="v$(date +'%Y.%m.%d')"
+          echo "今日生成的版本号: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: 检查今日版本是否已发布
+        id: check_release
+        run: |
+          VERSION="${{ steps.generate_version.outputs.version }}"
+          echo "检查 Release '${VERSION}' 是否已存在..."
+          
+          if gh release view "${VERSION}" --repo ${{ github.repository }} > /dev/null 2>&1; then
+            echo "今日版本 '${VERSION}' 已存在，跳过创建。"
             echo "EXISTS=true" >> $GITHUB_OUTPUT
           else
-            echo "Release '${RELEASE_TAG}' 不存在，准备创建。"
+            echo "今日版本 '${VERSION}' 不存在，准备创建。"
             echo "EXISTS=false" >> $GITHUB_OUTPUT
           fi
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: 创建新的Release
+      - name: 创建新的 Release
         if: steps.check_release.outputs.EXISTS == 'false'
         uses: softprops/action-gh-release@v2
         with:
-          # 提前拼接好完整的标签名，避免解析错误
-          tag_name: v${{ steps.check_upstream.outputs.UPSTREAM_TAG }}
-          name: Docker镜像更新 v${{ steps.check_upstream.outputs.UPSTREAM_TAG }}
-          # 自动生成包含该版本内所有 PR 和 Commit 的发布说明
-          generate_release_notes: true
-          # 标记为正式发布
+          tag_name: ${{ steps.generate_version.outputs.version }}
+          name: QwenPaw 每日更新 ${{ steps.generate_version.outputs.version }}
+          body: |
+            自动发布的 QwenPaw 每日稳定版 (latest) 更新。
+            
+            **上游镜像信息：**
+            - 镜像名称：`agentscope/qwenpaw:latest`
+            - 镜像 Digest：`${{ steps.get_digest.outputs.digest }}`
+          generate_release_notes: false
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
