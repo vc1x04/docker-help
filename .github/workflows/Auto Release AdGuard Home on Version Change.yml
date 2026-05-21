@@ -1,72 +1,78 @@
-name: Auto Release AdGuard Home on Version Change
+# .github/workflows/check-docker-release.yml
+name: 检查Docker镜像更新并自动发布Release
 
 on:
   schedule:
-    - cron: '0 18 * * *'   # 北京时间每天凌晨2点
-  workflow_dispatch:
-
-permissions:
-  contents: write
+    # 每天 UTC 时间 18:00 执行 (即北京时间凌晨 2:00)
+    - cron: '0 18 * * *'
+  workflow_dispatch: # 允许手动触发，方便测试
 
 jobs:
-  release:
+  check-and-release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # 用于创建 Release
     steps:
-      - name: Pull latest AdGuard Home image
-        run: docker pull adguard/adguardhome:latest
+      - name: 检出代码
+        uses: actions/checkout@v4
 
-      - name: Extract upstream version
-        id: version
+      - name: 获取上游Docker镜像的最新标签
+        id: check_upstream
         run: |
-          VERSION=$(docker run --rm adguard/adguardhome:latest --version | awk '{print $NF}')
-          echo "Detected upstream version: $VERSION"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          # 1. 定义要检查的Docker镜像名称
+          DOCKER_IMAGE="agentscope/qwenpaw"
 
-      - name: Check if this version already released
-        id: check
+          # 2. 调用 Docker Hub API 获取镜像标签
+          # 使用 v2 API 获取标签列表，并按创建日期降序排列，取第一个
+          echo "正在检查镜像: $DOCKER_IMAGE"
+          RESPONSE=$(curl -s "https://hub.docker.com/v2/repositories/${DOCKER_IMAGE}/tags/?page_size=1&ordering=-last_updated")
+          
+          # 3. 使用 jq 解析 JSON 响应，提取最新的标签名
+          # 这里排除 'latest' 这类浮动标签，只关注版本号标签
+          TAG=$(echo "$RESPONSE" | jq -r '.results[] | select(.name != "latest") | .name' | head -1)
+          
+          # 4. 检查是否成功获取到标签
+          if [ -z "$TAG" ]; then
+            echo "错误：未能从Docker Hub获取到最新标签。"
+            exit 1
+          fi
+          
+          echo "上游镜像最新标签: $TAG"
+          # 将提取到的标签名作为步骤输出，供后续步骤使用
+          echo "UPSTREAM_TAG=$TAG" >> $GITHUB_OUTPUT
+
+      - name: 检查是否已存在对应Release
+        id: check_release
+        # 此步骤依赖上一步的输出
+        if: steps.check_upstream.outputs.UPSTREAM_TAG != ''
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          if gh release view "$VERSION" --json tagName &>/dev/null; then
-            echo "Version ${VERSION} already has a release. No release needed."
-            echo "exists=true" >> $GITHUB_OUTPUT
+          UPSTREAM_TAG=${{ steps.check_upstream.outputs.UPSTREAM_TAG }}
+          echo "检查Release 'v${UPSTREAM_TAG}' 是否已存在..."
+          
+          # 使用 GitHub CLI (gh) 检查该版本标签的Release是否存在
+          # 如果存在，命令返回成功（exit code 0）；如果不存在，命令失败（exit code 1）
+          if gh release view "v${UPSTREAM_TAG}" --repo ${{ github.repository }} > /dev/null 2>&1; then
+            echo "Release 'v${UPSTREAM_TAG}' 已存在，跳过创建。"
+            echo "EXISTS=true" >> $GITHUB_OUTPUT
           else
-            echo "New version ${VERSION} detected. Will create release."
-            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Release 'v${UPSTREAM_TAG}' 不存在，准备创建。"
+            echo "EXISTS=false" >> $GITHUB_OUTPUT
           fi
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }} # 提供权限以调用GitHub API
 
-      - name: Fetch upstream changelog
-        if: steps.check.outputs.exists == 'false'
-        id: changelog
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          # 调用 GitHub API 获取 AdGuardHome 仓库该版本的 Release 信息
-          CHANGELOG=$(gh api "repos/AdguardTeam/AdGuardHome/releases/tags/${VERSION}" --jq '.body' 2>/dev/null || echo "")
-          if [ -z "$CHANGELOG" ]; then
-            CHANGELOG="No official changelog found for this version. Built from upstream Docker image \`adguard/adguardhome:${VERSION}\`."
-          fi
-          # 将日志内容写入文件，避免特殊字符在 shell 中解析错误
-          echo "$CHANGELOG" > /tmp/changelog.md
-          echo "changelog_file=/tmp/changelog.md" >> $GITHUB_OUTPUT
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Save Docker image
-        if: steps.check.outputs.exists == 'false'
-        run: |
-          docker save -o adguardhome-${{ steps.version.outputs.version }}.tar \
-            adguard/adguardhome:latest
-
-      - name: Create Release and Upload Asset
-        if: steps.check.outputs.exists == 'false'
-        uses: softprops/action-gh-release@v3
+      - name: 创建新的Release
+        # 仅在确认Release不存在时执行
+        if: steps.check_release.outputs.EXISTS == 'false'
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.version }}
-          name: AdGuard Home ${{ steps.version.outputs.version }}
-          body_path: ${{ steps.changelog.outputs.changelog_file }}
-          files: adguardhome-${{ steps.version.outputs.version }}.tar
-          draft: false
+          # 创建版本标签，格式如 v1.1.5
+          tag_name: v${{ steps.check_upstream.outputs.UPSTREAM_TAG }}
+          # 自动生成的Release标题
+          name: Docker镜像更新 ${{ steps.check_upstream.outputs.UPSTREAM_TAG }}
+          # 自动生成发布说明
+          generate_release_notes: true
+          # 标记为正式发布
           prerelease: false
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # 官方Action要求使用secrets上下文
