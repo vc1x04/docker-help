@@ -1,4 +1,4 @@
-name: 每日自动发布 QwenPaw 离线包 (含日志)
+name: 智能发布 QwenPaw 离线包（真实版本）
 
 on:
   schedule:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  daily-release:
+  release-if-new:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -16,23 +16,22 @@ jobs:
       - name: 拉取最新镜像
         run: docker pull agentscope/qwenpaw:latest
 
-      - name: 获取上游最新官方日志
-        id: get_changelog
-        run: |
-          # 尝试获取 QwenPaw 官方仓库的最新 Release 日志
-          OFFICIAL_REPO="agentscope-ai/qwenpaw"
-          CHANGELOG=$(gh api "repos/${OFFICIAL_REPO}/releases/latest" --jq '.body' 2>/dev/null || echo "官方暂未提供最新的 GitHub Release 日志。")
-          echo "changelog<<EOF" >> $GITHUB_OUTPUT
-          echo "$CHANGELOG" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 生成基于北京时间的日期版本号
+      - name: 从镜像中提取真实版本号
         id: version
         run: |
-          VERSION="v$(TZ=Asia/Shanghai date +'%Y.%m.%d')"
-          echo "今日版本号: $VERSION"
+          # 方法1：pip show (最快)
+          RAW=$(docker run --rm agentscope/qwenpaw:latest pip show qwenpaw 2>/dev/null | awk '/^Version: /{print $2}')
+          # 方法2：importlib.metadata (更通用)
+          if [ -z "$RAW" ]; then
+            RAW=$(docker run --rm agentscope/qwenpaw:latest python -c "from importlib.metadata import version; print(version('qwenpaw'))" 2>/dev/null)
+          fi
+          if [ -z "$RAW" ]; then
+            echo "错误：无法从镜像中提取版本号。请检查包名或安装状态。"
+            exit 1
+          fi
+          # 统一添加 v 前缀
+          VERSION="v${RAW#v}"
+          echo "检测到上游版本: $VERSION"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: 检查该版本是否已发布
@@ -40,16 +39,32 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           if gh release view "$VERSION" --repo ${{ github.repository }} > /dev/null 2>&1; then
-            echo "已存在版本 $VERSION，跳过发布。"
+            echo "版本 $VERSION 已存在 Release，跳过发布。"
             echo "exists=true" >> $GITHUB_OUTPUT
           else
-            echo "新版本 $VERSION，准备发布。"
+            echo "新版本 $VERSION 发现，准备创建 Release。"
             echo "exists=false" >> $GITHUB_OUTPUT
           fi
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: 导出并压缩镜像为 tar.gz
+      - name: 获取上游官方更新日志（中文优先）
+        id: changelog
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          # 假设上游仓库为 Agentscope/QwenPaw，标签名与 VERSION 一致
+          BODY=$(gh api "repos/Agentscope/QwenPaw/releases/tags/${VERSION}" --jq '.body' 2>/dev/null || echo "")
+          if [ -z "$BODY" ]; then
+            BODY="暂无该版本的官方更新日志。请访问 [QwenPaw 项目主页](https://github.com/Agentscope/QwenPaw) 查看最新动态。"
+          fi
+          # 写入临时文件避免特殊字符问题
+          echo "$BODY" > /tmp/changelog.md
+          echo "changelog_file=/tmp/changelog.md" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: 导出镜像并压缩
         if: steps.check.outputs.exists == 'false'
         run: |
           VERSION="${{ steps.version.outputs.version }}"
@@ -61,18 +76,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.version }}
-          name: QwenPaw 每日镜像 ${{ steps.version.outputs.version }}
-          body: |
-            📅 自动发布基于北京时间 ${{ steps.version.outputs.version }} 的 QwenPaw 离线镜像包。
-
-            加载方式：
-            ```bash
-            docker load -i qwenpaw- $ {{ steps.version.outputs.version }}.tar.gz
-            ```
-
-            ---
-            ### 📝 官方更新日志
-            ${{ steps.get_changelog.outputs.changelog }}
+          name: QwenPaw ${{ steps.version.outputs.version }} 离线包
+          body_path: ${{ steps.changelog.outputs.changelog_file }}
           files: qwenpaw-${{ steps.version.outputs.version }}.tar.gz
           draft: false
           prerelease: false
