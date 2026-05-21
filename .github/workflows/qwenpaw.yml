@@ -1,79 +1,80 @@
-name: 检查Docker镜像latest更新并自动发布
+name: 每日自动发布 QwenPaw 离线包 (含日志)
 
 on:
   schedule:
-    # 每天 UTC 18:00 (北京时间凌晨 2:00) 执行
+    # 北京时间每天凌晨 2:00 (UTC 18:00)
     - cron: '0 18 * * *'
-  workflow_dispatch: # 允许手动触发
+  workflow_dispatch:
 
 jobs:
-  check-and-release:
+  daily-release:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+
     steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
+      - name: 拉取最新镜像
+        run: docker pull agentscope/qwenpaw:latest
 
-      - name: 获取 latest 镜像的 Digest (指纹)
-        id: get_digest
+      - name: 获取上游最新官方日志
+        id: get_changelog
         run: |
-          DOCKER_IMAGE="agentscope/qwenpaw"
-          echo "正在获取 $DOCKER_IMAGE:latest 的真实指纹..."
-          
-          # 调用 Docker Hub API 获取 latest 标签对应的真实镜像 Digest
-          DIGEST=$(curl -s "https://hub.docker.com/v2/repositories/${DOCKER_IMAGE}/tags/latest" | jq -r '.images[0].digest')
-          
-          if [ -z "$DIGEST" ] || [ "$DIGEST" = "null" ]; then
-            echo "错误：未能获取到 latest 镜像的 Digest。"
-            exit 1
-          fi
-          
-          # 提取 Digest 的前 12 位作为唯一标识（例如 sha256:abc123... -> abc123456789）
-          SHORT_DIGEST=$(echo $DIGEST | cut -c8-19)
-          echo "latest 镜像指纹: $SHORT_DIGEST"
-          
-          # 将完整指纹和短指纹保存为输出变量
-          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
-          echo "short_digest=$SHORT_DIGEST" >> $GITHUB_OUTPUT
+          # 尝试获取 QwenPaw 官方仓库的最新 Release 日志
+          OFFICIAL_REPO="agentscope-ai/qwenpaw"
+          CHANGELOG=$(gh api "repos/${OFFICIAL_REPO}/releases/latest" --jq '.body' 2>/dev/null || echo "官方暂未提供最新的 GitHub Release 日志。")
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 生成基于日期的版本号
-        id: generate_version
+      - name: 生成基于北京时间的日期版本号
+        id: version
         run: |
-          # 使用当天的日期作为版本号 (格式: v2026.05.21)
-          VERSION="v$(date +'%Y.%m.%d')"
-          echo "今日生成的版本号: $VERSION"
+          VERSION="v$(TZ=Asia/Shanghai date +'%Y.%m.%d')"
+          echo "今日版本号: $VERSION"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: 检查今日版本是否已发布
-        id: check_release
+      - name: 检查该版本是否已发布
+        id: check
         run: |
-          VERSION="${{ steps.generate_version.outputs.version }}"
-          echo "检查 Release '${VERSION}' 是否已存在..."
-          
-          if gh release view "${VERSION}" --repo ${{ github.repository }} > /dev/null 2>&1; then
-            echo "今日版本 '${VERSION}' 已存在，跳过创建。"
-            echo "EXISTS=true" >> $GITHUB_OUTPUT
+          VERSION="${{ steps.version.outputs.version }}"
+          if gh release view "$VERSION" --repo ${{ github.repository }} > /dev/null 2>&1; then
+            echo "已存在版本 $VERSION，跳过发布。"
+            echo "exists=true" >> $GITHUB_OUTPUT
           else
-            echo "今日版本 '${VERSION}' 不存在，准备创建。"
-            echo "EXISTS=false" >> $GITHUB_OUTPUT
+            echo "新版本 $VERSION，准备发布。"
+            echo "exists=false" >> $GITHUB_OUTPUT
           fi
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: 创建新的 Release
-        if: steps.check_release.outputs.EXISTS == 'false'
+      - name: 导出并压缩镜像为 tar.gz
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          docker save agentscope/qwenpaw:latest | gzip > qwenpaw-${VERSION}.tar.gz
+          echo "已打包为 qwenpaw-${VERSION}.tar.gz"
+
+      - name: 创建 Release 并上传压缩包
+        if: steps.check.outputs.exists == 'false'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.generate_version.outputs.version }}
-          name: QwenPaw 每日更新 ${{ steps.generate_version.outputs.version }}
+          tag_name: ${{ steps.version.outputs.version }}
+          name: QwenPaw 每日镜像 ${{ steps.version.outputs.version }}
           body: |
-            自动发布的 QwenPaw 每日稳定版 (latest) 更新。
-            
-            **上游镜像信息：**
-            - 镜像名称：`agentscope/qwenpaw:latest`
-            - 镜像 Digest：`${{ steps.get_digest.outputs.digest }}`
-          generate_release_notes: false
+            📅 自动发布基于北京时间 ${{ steps.version.outputs.version }} 的 QwenPaw 离线镜像包。
+
+            加载方式：
+            ```bash
+            docker load -i qwenpaw- $ {{ steps.version.outputs.version }}.tar.gz
+            ```
+
+            ---
+            ### 📝 官方更新日志
+            ${{ steps.get_changelog.outputs.changelog }}
+          files: qwenpaw-${{ steps.version.outputs.version }}.tar.gz
+          draft: false
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
