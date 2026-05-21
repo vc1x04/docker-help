@@ -1,0 +1,50 @@
+name: Test QwenPaw Version Extraction
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-version:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pull latest QwenPaw image
+        run: docker pull agentscope/qwenpaw:latest
+
+      - name: Extract version (Method 1: pip show)
+        id: version_pip
+        run: |
+          echo "=== Trying pip show ==="
+          VERSION=$(docker run --rm agentscope/qwenpaw:latest pip show qwenpaw 2>/dev/null | awk '/^Version: /{print $2}')
+          echo "pip show version: '$VERSION'"
+          if [ -z "$VERSION" ]; then
+            echo "pip show failed or returned empty"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Extract version (Method 2: importlib.metadata)
+        id: version_importlib
+        run: |
+          echo "=== Trying importlib.metadata ==="
+          VERSION=$(docker run --rm agentscope/qwenpaw:latest python -c "from importlib.metadata import version; print(version('qwenpaw'))" 2>/dev/null)
+          echo "importlib version: '$VERSION'"
+          if [ -z "$VERSION" ]; then
+            echo "importlib.metadata failed or returned empty"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Extract version (Method 3: direct import of __version__)
+        id: version_direct
+        run: |
+          echo "=== Trying direct import __version__ ==="
+          VERSION=$(docker run --rm agentscope/qwenpaw:latest python -c "import qwenpaw; print(qwenpaw.__version__)" 2>/dev/null)
+          echo "direct import version: '$VERSION'"
+          if [ -z "$VERSION" ]; then
+            echo "direct import failed or returned empty"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Summary
+        run: |
+          echo "pip show result: ${{ steps.version_pip.outputs.version }}"
+          echo "importlib result: ${{ steps.version_importlib.outputs.version }}"
+          echo "direct import result: ${{ steps.version_direct.outputs.version }}"
