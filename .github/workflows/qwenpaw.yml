@@ -151,7 +151,7 @@ jobs:
 
       - name: 创建 Release 并上传压缩包
         if: steps.check.outputs.exists == 'false'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.version.outputs.version }}
           name: QwenPaw ${{ steps.version.outputs.version }}
