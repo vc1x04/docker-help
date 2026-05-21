@@ -1,7 +1,8 @@
-name: 智能发布 QwenPaw 离线包（优化日志拉取）
+name: 智能发布 QwenPaw 离线包（压缩版）
 
 on:
   schedule:
+    # 北京时间每天凌晨 2:00 (UTC 18:00)
     - cron: '0 18 * * *'
   workflow_dispatch:
 
@@ -51,68 +52,64 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: 导出镜像（不压缩）
+      - name: 导出镜像并压缩（避免超过 2 GB 限制）
         if: steps.check.outputs.exists == 'false'
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          docker save -o qwenpaw-${VERSION}.tar agentscope/qwenpaw:latest
-          echo "已导出为 qwenpaw-${VERSION}.tar"
+          # 使用 pigz 并行压缩，速度快，生成 .tar.gz
+          docker save agentscope/qwenpaw:latest | pigz > qwenpaw-${VERSION}.tar.gz
+          echo "已压缩打包为 qwenpaw-${VERSION}.tar.gz"
 
-      - name: 计算 tar 文件的 SHA256
+      - name: 计算压缩包的 SHA256
         if: steps.check.outputs.exists == 'false'
         id: filesha
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          SHA=$(sha256sum qwenpaw-${VERSION}.tar | awk '{print $1}')
-          echo "文件 SHA256: $SHA"
+          SHA=$(sha256sum qwenpaw-${VERSION}.tar.gz | awk '{print $1}')
+          echo "压缩包 SHA256: $SHA"
           echo "sha256=$SHA" >> $GITHUB_OUTPUT
 
-      - name: 获取上游官方最新日志
+      - name: 获取上游官方对应版本的日志
         id: get_changelog
         if: steps.check.outputs.exists == 'false'
         run: |
-          OFFICIAL_REPO="agentscope-ai/QwenPaw"  # 已修正为正确的官方仓库
-          VERSION="${{ steps.version.outputs.version }}" # 例如 v1.1.8.post1
+          OFFICIAL_REPO="agentscope-ai/QwenPaw"  # 确认为正确的官方仓库
+          VERSION="${{ steps.version.outputs.version }}"  # 例如 v1.1.8.post1
 
-          echo "正在从仓库 ${OFFICIAL_REPO} 拉取版本 ${VERSION} 的Release日志..."
-
-          # 直接请求特定版本的Release信息
+          echo "正在拉取版本 ${VERSION} 的官方 Release 日志..."
           RELEASE_BODY=$(gh api "repos/${OFFICIAL_REPO}/releases/tags/${VERSION}" --jq '.body' 2>/dev/null)
 
           if [ -n "$RELEASE_BODY" ]; then
-            echo "成功拉取到版本 ${VERSION} 的官方日志。"
+            echo "成功获取 ${VERSION} 的日志。"
             echo "$RELEASE_BODY" > /tmp/official_changelog.md
-            echo "changelog_source=特定版本 (${VERSION})" >> $GITHUB_OUTPUT
+            echo "log_source=对应版本" >> $GITHUB_OUTPUT
           else
-            echo "警告：未找到版本 ${VERSION} 的Release日志，尝试拉取最新Release作为备选..."
-            # 备选方案：拉取最新Release信息
-            LATEST_RELEASE=$(gh api "repos/${OFFICIAL_REPO}/releases/latest" --jq '{tag: .tag_name, body: .body}' 2>/dev/null)
-            if [ -n "$LATEST_RELEASE" ]; then
-              LATEST_TAG=$(echo "$LATEST_RELEASE" | jq -r '.tag')
-              LATEST_BODY=$(echo "$LATEST_RELEASE" | jq -r '.body')
-              echo "> ⚠️ 注意：当前镜像版本为 ${VERSION}，但以下日志来自官方最新Release（${LATEST_TAG}），可能略有差异。" > /tmp/official_changelog.md
+            echo "未找到 ${VERSION} 的 Release，尝试最新 Release..."
+            LATEST=$(gh api "repos/${OFFICIAL_REPO}/releases/latest" --jq '{tag: .tag_name, body: .body}' 2>/dev/null)
+            if [ -n "$LATEST" ]; then
+              TAG=$(echo "$LATEST" | jq -r '.tag')
+              BODY=$(echo "$LATEST" | jq -r '.body')
+              echo "> ⚠️ 官方没有 ${VERSION} 对应的 Release，以下日志来自最新的 ${TAG}，仅供参考。" > /tmp/official_changelog.md
               echo "" >> /tmp/official_changelog.md
-              echo "$LATEST_BODY" >> /tmp/official_changelog.md
-              echo "changelog_source=最新Release (${LATEST_TAG})" >> $GITHUB_OUTPUT
+              echo "$BODY" >> /tmp/official_changelog.md
+              echo "log_source=最新 Release (${TAG})" >> $GITHUB_OUTPUT
             else
-              echo "错误：无法获取任何官方Release日志。"
-              echo "暂无官方更新日志。请访问 [QwenPaw 项目主页](https://github.com/${OFFICIAL_REPO}) 查看。" > /tmp/official_changelog.md
-              echo "changelog_source=无" >> $GITHUB_OUTPUT
+              echo "暂无官方更新日志。" > /tmp/official_changelog.md
+              echo "log_source=无" >> $GITHUB_OUTPUT
             fi
           fi
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: 生成最终的 Release 说明
+      - name: 生成最终 Release 说明
         if: steps.check.outputs.exists == 'false'
         id: generate_body
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           DIGEST="${{ steps.digest.outputs.digest }}"
           FILESHA="${{ steps.filesha.outputs.sha256 }}"
-          CHANGELOG_SOURCE="${{ steps.get_changelog.outputs.changelog_source }}"
 
-          echo "## 📋 官方更新日志 (来源: ${CHANGELOG_SOURCE})" > /tmp/release_body.md
+          echo "## 📋 官方更新日志" > /tmp/release_body.md
           if [ -f /tmp/official_changelog.md ]; then
             cat /tmp/official_changelog.md >> /tmp/release_body.md
           else
@@ -129,17 +126,17 @@ jobs:
           | 类型 | 值 |
           |------|----|
           | 上游镜像摘要 | \`${DIGEST}\` |
-          | tar 文件 SHA256 | \`${FILESHA}\` |
+          | 压缩包 SHA256 | \`${FILESHA}\` |
 
           ### 验证步骤
-          1. 下载并校验文件完整性：
+          1. 下载并校验压缩包完整性：
              \`\`\`bash
-             wget https://github.com/${{ github.repository }}/releases/download/${VERSION}/qwenpaw-${VERSION}.tar
-             echo "${FILESHA}  qwenpaw-${VERSION}.tar" | sha256sum -c
+             wget https://github.com/${{ github.repository }}/releases/download/${VERSION}/qwenpaw-${VERSION}.tar.gz
+             echo "${FILESHA}  qwenpaw-${VERSION}.tar.gz" | sha256sum -c
              \`\`\`
-          2. 加载镜像并查看 RepoDigest：
+          2. 加载镜像并核对上游摘要：
              \`\`\`bash
-             docker load -i qwenpaw-${VERSION}.tar
+             docker load -i qwenpaw-${VERSION}.tar.gz
              docker images --digests | grep agentscope/qwenpaw
              \`\`\`
           3. 确认输出的摘要中包含 \`${DIGEST#*@}\` 即为官方原版。
@@ -152,14 +149,14 @@ jobs:
 
           echo "body_file=/tmp/release_body.md" >> $GITHUB_OUTPUT
 
-      - name: 创建 Release 并上传 tar 文件
+      - name: 创建 Release 并上传压缩包
         if: steps.check.outputs.exists == 'false'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.version }}
           name: QwenPaw ${{ steps.version.outputs.version }}
           body_path: ${{ steps.generate_body.outputs.body_file }}
-          files: qwenpaw-${{ steps.version.outputs.version }}.tar
+          files: qwenpaw-${{ steps.version.outputs.version }}.tar.gz
           draft: false
           prerelease: false
         env:
