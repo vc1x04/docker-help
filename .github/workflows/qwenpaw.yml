@@ -1,50 +1,76 @@
-name: Test QwenPaw Version Extraction
+name: 检查Docker镜像更新并自动发布Release
 
 on:
-  workflow_dispatch:
+  schedule:
+    # 每天 UTC 时间 18:00 执行 (即北京时间凌晨 2:00)
+    - cron: '0 18 * * *'
+  workflow_dispatch: # 允许手动触发，方便测试
 
 jobs:
-  test-version:
+  check-and-release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # 用于创建 Release
     steps:
-      - name: "Pull latest QwenPaw image"
-        run: docker pull agentscope/qwenpaw:latest
+      - name: 检出代码
+        uses: actions/checkout@v4
 
-      - name: "Extract version Method 1 pip show"
-        id: version_pip
+      - name: 安装 jq 工具
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: 获取上游Docker镜像的最新标签
+        id: check_upstream
         run: |
-          echo "=== Trying pip show ==="
-          VERSION=$(docker run --rm agentscope/qwenpaw:latest pip show qwenpaw 2>/dev/null | awk '/^Version: /{print $2}')
-          echo "pip show version: '$VERSION'"
-          if [ -z "$VERSION" ]; then
-            echo "pip show failed or returned empty"
+          # 1. 定义要检查的Docker镜像名称
+          DOCKER_IMAGE="agentscope/qwenpaw"
+
+          # 2. 调用 Docker Hub API 获取镜像标签
+          echo "正在检查镜像: $DOCKER_IMAGE"
+          RESPONSE=$(curl -s "https://hub.docker.com/v2/repositories/${DOCKER_IMAGE}/tags/?page_size=5&ordering=-last_updated")
+          
+          # 3. 使用 jq 解析 JSON 响应，提取最新的标签名
+          # 排除 'latest', 'main', 'master' 等浮动标签，只取第一个语义化版本号
+          TAG=$(echo "$RESPONSE" | jq -r '.results[] | select(.name != "latest" and .name != "main") | .name' | head -1)
+          
+          # 4. 检查是否成功获取到标签
+          if [ -z "$TAG" ]; then
+            echo "错误：未能从Docker Hub获取到最新标签。"
+            exit 1
           fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          
+          echo "上游镜像最新标签: $TAG"
+          # 将提取到的标签名作为步骤输出
+          echo "UPSTREAM_TAG=$TAG" >> $GITHUB_OUTPUT
 
-      - name: "Extract version Method 2 importlib"
-        id: version_importlib
+      - name: 检查是否已存在对应Release
+        id: check_release
+        if: steps.check_upstream.outputs.UPSTREAM_TAG != ''
         run: |
-          echo "=== Trying importlib.metadata ==="
-          VERSION=$(docker run --rm agentscope/qwenpaw:latest python -c "from importlib.metadata import version; print(version('qwenpaw'))" 2>/dev/null)
-          echo "importlib version: '$VERSION'"
-          if [ -z "$VERSION" ]; then
-            echo "importlib.metadata failed or returned empty"
+          UPSTREAM_TAG=${{ steps.check_upstream.outputs.UPSTREAM_TAG }}
+          RELEASE_TAG="v${UPSTREAM_TAG}"
+          echo "检查Release '${RELEASE_TAG}' 是否已存在..."
+          
+          # 使用 GitHub CLI (gh) 检查该版本标签的Release是否存在
+          if gh release view "${RELEASE_TAG}" --repo ${{ github.repository }} > /dev/null 2>&1; then
+            echo "Release '${RELEASE_TAG}' 已存在，跳过创建。"
+            echo "EXISTS=true" >> $GITHUB_OUTPUT
+          else
+            echo "Release '${RELEASE_TAG}' 不存在，准备创建。"
+            echo "EXISTS=false" >> $GITHUB_OUTPUT
           fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ github.token }}
 
-      - name: "Extract version Method 3 direct import"
-        id: version_direct
-        run: |
-          echo "=== Trying direct import __version__ ==="
-          VERSION=$(docker run --rm agentscope/qwenpaw:latest python -c "import qwenpaw; print(qwenpaw.__version__)" 2>/dev/null)
-          echo "direct import version: '$VERSION'"
-          if [ -z "$VERSION" ]; then
-            echo "direct import failed or returned empty"
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: "Summary"
-        run: |
-          echo "pip show result: ${{ steps.version_pip.outputs.version }}"
-          echo "importlib result: ${{ steps.version_importlib.outputs.version }}"
-          echo "direct import result: ${{ steps.version_direct.outputs.version }}"
+      - name: 创建新的Release
+        if: steps.check_release.outputs.EXISTS == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          # 提前拼接好完整的标签名，避免解析错误
+          tag_name: v${{ steps.check_upstream.outputs.UPSTREAM_TAG }}
+          name: Docker镜像更新 v${{ steps.check_upstream.outputs.UPSTREAM_TAG }}
+          # 自动生成包含该版本内所有 PR 和 Commit 的发布说明
+          generate_release_notes: true
+          # 标记为正式发布
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
