@@ -1,4 +1,4 @@
-name: 智能发布 QwenPaw 离线包（带镜像校验）
+name: 智能发布 QwenPaw 离线包（带官方日志和校验）
 
 on:
   schedule:
@@ -28,13 +28,12 @@ jobs:
             exit 1
           fi
           VERSION="v${RAW#v}"
-          echo "检测到上游版本: $VERSION"
+          echo "检测到镜像版本: $VERSION"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: 获取上游镜像的 RepoDigest（sha256）
+      - name: 获取上游镜像的 RepoDigest
         id: digest
         run: |
-          # 获取该镜像的 RepoDigests，取第一个即对应 agentscope/qwenpaw:latest 的上游 digest
           DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' agentscope/qwenpaw:latest)
           echo "上游镜像摘要: $DIGEST"
           echo "digest=$DIGEST" >> $GITHUB_OUTPUT
@@ -69,25 +68,49 @@ jobs:
           echo "压缩包 SHA256: $SHA"
           echo "sha256=$SHA" >> $GITHUB_OUTPUT
 
-      - name: 获取上游更新日志并生成完整说明
-        id: changelog
+      - name: 获取上游官方最新日志
+        id: get_changelog
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          OFFICIAL_REPO="agentscope-ai/qwenpaw"   # 请确认正确的官方仓库
+          # 获取最新 Release 的 tag 和 body
+          RELEASE_DATA=$(gh api "repos/${OFFICIAL_REPO}/releases/latest" --jq '{tag: .tag_name, body: .body}' 2>/dev/null)
+          if [ -z "$RELEASE_DATA" ]; then
+            CHANGELOG="官方暂未提供最新的 GitHub Release 日志。"
+            RELEASE_TAG="未知"
+          else
+            RELEASE_TAG=$(echo "$RELEASE_DATA" | jq -r '.tag')
+            CHANGELOG=$(echo "$RELEASE_DATA" | jq -r '.body')
+          fi
+          echo "日志来源版本: $RELEASE_TAG"
+          # 将日志内容保存到文件，方便拼接
+          echo "$CHANGELOG" > /tmp/official_changelog.md
+          echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: 生成最终的 Release 说明
         if: steps.check.outputs.exists == 'false'
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          # 尝试多种 tag 格式拉取上游 Release 日志
-          BODY=$(gh api "repos/Agentscope/QwenPaw/releases/tags/${VERSION}" --jq '.body' 2>/dev/null || echo "")
-          if [ -z "$BODY" ]; then
-            NO_V="${VERSION#v}"
-            BODY=$(gh api "repos/Agentscope/QwenPaw/releases/tags/${NO_V}" --jq '.body' 2>/dev/null || echo "")
-          fi
-          if [ -z "$BODY" ]; then
-            BODY="暂无官方更新日志，请访问 [QwenPaw 项目主页](https://github.com/Agentscope/QwenPaw)。"
-          fi
-
           DIGEST="${{ steps.digest.outputs.digest }}"
           FILESHA="${{ steps.filesha.outputs.sha256 }}"
-          cat > /tmp/release_body.md <<EOF
-          $BODY
+          RELEASE_TAG="${{ steps.get_changelog.outputs.release_tag }}"
+
+          # 写入官方日志（如果来源版本与镜像版本不同，会提示）
+          echo "## 📋 官方更新日志" > /tmp/release_body.md
+          if [ -f /tmp/official_changelog.md ]; then
+            cat /tmp/official_changelog.md >> /tmp/release_body.md
+            if [ "$RELEASE_TAG" != "$VERSION" ] && [ "$RELEASE_TAG" != "未知" ]; then
+              echo "" >> /tmp/release_body.md
+              echo "> ⚠️ 注意：以上日志来自官方最新 Release（${RELEASE_TAG}），与当前镜像版本（${VERSION}）可能略有差异。" >> /tmp/release_body.md
+            fi
+          else
+            echo "暂无官方更新日志。" >> /tmp/release_body.md
+          fi
+
+          # 追加校验信息
+          cat >> /tmp/release_body.md <<EOF
 
           ---
 
@@ -99,30 +122,26 @@ jobs:
           | 上游镜像摘要 | \`${DIGEST}\` |
           | 压缩包 SHA256 | \`${FILESHA}\` |
 
-          ### 如何验证镜像与上游一致？
+          ### 验证步骤
           1. 下载压缩包并校验文件完整性：
              \`\`\`bash
              wget https://github.com/${{ github.repository }}/releases/download/${VERSION}/qwenpaw-${VERSION}.tar.gz
              echo "${FILESHA}  qwenpaw-${VERSION}.tar.gz" | sha256sum -c
-             \``\`
-          2. 加载镜像并查看其 RepoDigest：
+             \`\`\`
+          2. 加载镜像并查看 RepoDigest：
              \`\`\`bash
              docker load -i qwenpaw-${VERSION}.tar.gz
              docker images --digests | grep agentscope/qwenpaw
              \`\`\`
-          3. 确认输出的摘要中包含 \`${DIGEST#*@}\` 即可证明镜像与上游完全相同。
+          3. 确认输出的摘要中包含 \`${DIGEST#*@}\` 即为官方原版。
 
           ### 基础使用
           \`\`\`bash
-          docker pull agentscope/qwenpaw:latest
-          # 或加载离线包后直接运行
           docker run -d --name qwenpaw -p 8080:8080 agentscope/qwenpaw:latest
           \`\`\`
           EOF
 
-          echo "changelog_file=/tmp/release_body.md" >> $GITHUB_OUTPUT
-        env:
-          GH_TOKEN: ${{ github.token }}
+          echo "body_file=/tmp/release_body.md" >> $GITHUB_OUTPUT
 
       - name: 创建 Release 并上传压缩包
         if: steps.check.outputs.exists == 'false'
@@ -130,7 +149,7 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.version }}
           name: QwenPaw ${{ steps.version.outputs.version }}
-          body_path: ${{ steps.changelog.outputs.changelog_file }}
+          body_path: ${{ steps.generate_final_body.outputs.body_file }}
           files: qwenpaw-${{ steps.version.outputs.version }}.tar.gz
           draft: false
           prerelease: false
