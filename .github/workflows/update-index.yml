@@ -5,7 +5,6 @@ on:
     types: [published]
   workflow_dispatch:
 
-
 permissions:
   contents: write
 
@@ -21,14 +20,9 @@ jobs:
       - name: Rebuild Index Table
         run: |
           set -euo pipefail
-
-          RELEASES=$(gh release list --limit 100 --json tagName,publishedAt,name \
-
-            | jq -r 'sort_by(.publishedAt) | reverse | .[] | "\(.tagName)|\(.publishedAt)|\(.name)"')
-
+          RELEASES=$(gh release list --limit 100 --json tagName,publishedAt,name | jq -r 'sort_by(.publishedAt) | reverse | .[] | "\(.tagName)|\(.publishedAt)|\(.name)"')
           TABLE="| 镜像 | 最新版本 | 更新时间 | Release |\n"
           TABLE+="|------|---------|---------|--------|\n"
-
           while IFS='|' read -r tag date name; do
             [ -z "$tag" ] && continue
             IMAGE=$(echo "$name" | sed 's/ [^ ]*$//')
@@ -36,3 +30,30 @@ jobs:
             DATE_FMT=$(date -d "$date" '+%Y-%m-%d' 2>/dev/null || echo "$date")
             LINK="[View](../../releases/tag/${tag})"
             TABLE+="| ${IMAGE} | ${VERSION} | ${DATE_FMT} | ${LINK} |\n"
+          done <<< "$RELEASES"
+          echo -e "$TABLE" > /tmp/release_table.md
+          python3 << 'PYTHON_SCRIPT'
+          content = open('README.md', 'r').read()
+          new_table = open('/tmp/release_table.md', 'r').read()
+          start = '<!-- AUTO-INDEX-START -->'
+          end = '<!-- AUTO-INDEX-END -->'
+          if start not in content or end not in content:
+              print('Error: Missing anchor comments in README.md', file=sys.stderr)
+              exit(1)
+          result = content[:content.index(start)+len(start)] + '\n' + new_table + '\n' + content[content.index(end):]
+          open('README.md', 'w').write(result)
+          PYTHON_SCRIPT
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Commit and push changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "docs: auto-update release index table"
+            git push
+          fi
