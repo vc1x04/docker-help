@@ -6,14 +6,14 @@ on:
     - cron: '0 0 * * *'  # UTC 00:00 每日触发
 
 permissions:
-  contents: write  # v3 官方明确要求此权限
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # 🔍 版本比对（核心守门逻辑）
-      - name: Check for New Version
+      # 🔍 1. 版本比对 + 拉取上游更新日志
+      - name: Check for New Version & Fetch Changelog
         id: check_version
         run: |
           LATEST=$(curl -s https://api.github.com/repos/AdguardTeam/AdGuardHome/releases/latest | jq -r '.tag_name' | sed 's/^v//')
@@ -21,17 +21,32 @@ jobs:
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
             -H "Authorization: token ${{ github.token }}" \
             "https://api.github.com/repos/${{ github.repository }}/releases/tags/${TAG}")
-          
+
           if [ "$HTTP_CODE" = "200" ]; then
             echo "has_new=false" >> $GITHUB_OUTPUT
             echo "✅ Version ${LATEST} already exists, skipping."
           else
             echo "has_new=true" >> $GITHUB_OUTPUT
             echo "version=${LATEST}" >> $GITHUB_OUTPUT
-            echo "🆕 New version found: ${LATEST}"
+
+            UPSTREAM_BODY=$(curl -s https://api.github.com/repos/AdguardTeam/AdGuardHome/releases/latest | jq -r '.body')
+            [ "$UPSTREAM_BODY" = "null" ] && UPSTREAM_BODY="*No release notes provided by upstream.*"
+
+            # ✅ 关键修复：使用 printf 替代 heredoc，彻底避免 YAML 对 ## 和特殊符号的解析冲突
+            printf '%s\n' \
+              "## 📦 AdGuard Home Docker Mirror" \
+              "- **Version**: \`${LATEST}\`" \
+              "- **Image**: \`adguard/adguardhome:${LATEST}\`" \
+              "- **Source**: [Upstream Release](https://github.com/AdguardTeam/AdGuardHome/releases/tag/v${LATEST})" \
+              "" \
+              "---" \
+              "" \
+              "${UPSTREAM_BODY}" > release-body.md
+
+            echo "🆕 New version found: ${LATEST}, changelog fetched."
           fi
 
-      # ⬇️ 仅在有新版时拉取镜像
+      # ⬇️ 2. 仅在有新版时拉取并导出镜像
       - name: Pull & Export Docker Image
         if: steps.check_version.outputs.has_new == 'true'
         run: |
@@ -39,21 +54,17 @@ jobs:
           docker pull adguard/adguardhome:${VERSION}
           docker save adguard/adguardhome:${VERSION} | gzip > adguardhome-${VERSION}.tar.gz
 
-      # 🚀 完全对齐 v3 官方规范的 Release 上传
+      # 🚀 3. 创建 Release 并上传附件
       - name: Create Release and Upload Asset
         if: steps.check_version.outputs.has_new == 'true'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ steps.check_version.outputs.version }}
           name: AdGuard Home ${{ steps.check_version.outputs.version }}
-          body: |
-            ## AdGuard Home Docker Image
-            - **Version**: `${{ steps.check_version.outputs.version }}`
-            - **Source**: [Upstream Release](https://github.com/AdguardTeam/AdGuardHome/releases/tag/v${{ steps.check_version.outputs.version }})
+          body_path: release-body.md
           files: |
             adguardhome-${{ steps.check_version.outputs.version }}.tar.gz
           fail_on_unmatched_files: true
           make_latest: "true"
           draft: false
           prerelease: false
-          # token 省略即默认使用 ${{ github.token }}，符合 v3 最佳实践
