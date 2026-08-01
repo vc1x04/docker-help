@@ -1,4 +1,4 @@
-name: Docker Image Mirror Release
+name: Download AdGuard Home Image
 
 on:
   workflow_dispatch:
