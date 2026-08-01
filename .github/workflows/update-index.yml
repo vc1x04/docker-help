@@ -1,9 +1,8 @@
-name: Update README Index
+name: Auto Update Release Index
 
 on:
   release:
     types: [published]
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -12,23 +11,26 @@ jobs:
   update-index:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Rebuild Index Table
         run: |
           set -euo pipefail
 
-          # 获取所有非 draft、非 prerelease 的 Release，按发布时间倒序
+          # 获取最近100个release信息
           RELEASES=$(gh release list --limit 100 --json tagName,publishedAt,name \
 
             | jq -r 'sort_by(.publishedAt) | reverse | .[] | "\(.tagName)|\(.publishedAt)|\(.name)"')
 
-          # 生成表格内容
+          # 构建Markdown表格内容
           TABLE="| 镜像 | 最新版本 | 更新时间 | Release |\n"
           TABLE+="|------|---------|---------|--------|\n"
 
           while IFS='|' read -r tag date name; do
-            # 从 Release name 中提取镜像名（格式: "adguard/adguardhome v0.107.60"）
+            [ -z "$tag" ] && continue
             IMAGE=$(echo "$name" | sed 's/ [^ ]*$//')
             VERSION=$(echo "$tag" | sed 's/^v//')
             DATE_FMT=$(date -d "$date" '+%Y-%m-%d' 2>/dev/null || echo "$date")
@@ -36,17 +38,30 @@ jobs:
             TABLE+="| ${IMAGE} | ${VERSION} | ${DATE_FMT} | ${LINK} |\n"
           done <<< "$RELEASES"
 
-          # 用 sed 替换锚点之间的内容
-          sed -i "/<!-- AUTO-INDEX-START -->/,/<!-- AUTO-INDEX-END -->/c\\
-          <!-- AUTO-INDEX-START -->\n$(echo -e "$TABLE")\n<!-- AUTO-INDEX-END -->" README.md
-
+          # 使用Python安全替换锚点间内容，避免shell特殊字符导致的语法错误
+          python3 -c "
+          import sys
+          content = open('README.md', 'r').read()
+          new_table = sys.stdin.read()
+          start = '<!-- AUTO-INDEX-START -->'
+          end = '<!-- AUTO-INDEX-END -->'
+          if start not in content or end not in content:
+              print('Error: Missing anchor comments in README.md', file=sys.stderr)
+              sys.exit(1)
+          result = content[:content.index(start)+len(start)] + '\n' + new_table + '\n' + content[content.index(end):]
+          open('README.md', 'w').write(result)
+          " <<< "$(echo -e "$TABLE")"
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Commit & Push if changed
+      - name: Commit and push changes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add README.md
-          git diff --cached --quiet || git commit -m "docs: auto-update release index table"
-          git push
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "docs: auto-update release index table"
+            git push
+          fi
