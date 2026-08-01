@@ -1,6 +1,5 @@
 name: Auto Update Release Index
 
-# ✅ 这里是触发事件，缺一不可
 on:
   release:
     types: [published]
@@ -19,6 +18,8 @@ jobs:
           fetch-depth: 0
 
       - name: Rebuild Index Table
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           RELEASES=$(gh release list --limit 100 --json tagName,publishedAt,name | jq -r 'sort_by(.publishedAt) | reverse | .[] | "\(.tagName)|\(.publishedAt)|\(.name)"')
@@ -34,19 +35,17 @@ jobs:
           done <<< "$RELEASES"
           echo -e "$TABLE" > /tmp/release_table.md
           python3 << 'PYTHON_SCRIPT'
-import sys
-content = open('README.md', 'r').read()
-new_table = open('/tmp/release_table.md', 'r').read()
-start = '<!-- AUTO-INDEX-START -->'
-end = '<!-- AUTO-INDEX-END -->'
-if start not in content or end not in content:
-    print('Error: Missing anchor comments in README.md', file=sys.stderr)
-    sys.exit(1)
-result = content[:content.index(start)+len(start)] + '\n' + new_table + '\n' + content[content.index(end):]
-open('README.md', 'w').write(result)
-PYTHON_SCRIPT
-        env:
-          GH_TOKEN: ${{ github.token }}
+          import sys
+          content = open('README.md', 'r').read()
+          new_table = open('/tmp/release_table.md', 'r').read()
+          start = '<!-- AUTO-INDEX-START -->'
+          end = '<!-- AUTO-INDEX-END -->'
+          if start not in content or end not in content:
+              print('Error: Missing anchor comments in README.md', file=sys.stderr)
+              sys.exit(1)
+          result = content[:content.index(start)+len(start)] + '\n' + new_table + '\n' + content[content.index(end):]
+          open('README.md', 'w').write(result)
+          PYTHON_SCRIPT
 
       - name: Commit and push changes
         run: |
@@ -58,4 +57,3 @@ PYTHON_SCRIPT
           else
             git commit -m "docs: auto-update release index table"
             git push
-          fi
