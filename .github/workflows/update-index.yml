@@ -1,33 +1,18 @@
-name: Auto Update Release Index
-on:
-  release:
-    types: [published]
-  workflow_dispatch:
-permissions:
-  contents: write
-jobs:
-  update-index:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - name: Rebuild Index Table
         run: |
           set -euo pipefail
-          RELEASES= $ (gh release list --limit 100 --json tagName,publishedAt,name | jq -r 'sort_by(.publishedAt) | reverse | .[] | "  $ .tagName)|  $ .publishedAt)|  $ .name)"')
+          RELEASES=$(gh release list --limit 100 --json tagName,publishedAt,name | jq -r 'sort_by(.publishedAt) | reverse | .[] | "\(.tagName)|\(.publishedAt)|\(.name)"')
           TABLE="| 镜像 | 最新版本 | 更新时间 | Release |\n"
           TABLE+="|------|---------|---------|--------|\n"
           while IFS='|' read -r tag date name; do
-            [ -z " $ tag" ] && continue
-            IMAGE= $ (echo " $ name" | sed 's/ [^ ]* $ //')
-            VERSION= $ (echo " $ tag" | sed 's/^v//')
-            DATE_FMT= $ (date -d " $ date" '+%Y-%m-%d' 2>/dev/null || echo " $ date")
-            LINK="[View](../../releases/tag/ $ {tag})"
-            TABLE+="|  $ {IMAGE} |  $ {VERSION} |  $ {DATE_FMT} |  $ {LINK} |\n"
-          done <<< " $ RELEASES"
-          echo -e " $ TABLE" > /tmp/release_table.md
+            [ -z "$tag" ] && continue
+            IMAGE=$(echo "$name" | sed 's/ [^ ]*$//')
+            VERSION=$(echo "$tag" | sed 's/^v//')
+            DATE_FMT=$(date -d "$date" '+%Y-%m-%d' 2>/dev/null || echo "$date")
+            LINK="[View](../../releases/tag/${tag})"
+            TABLE+="| ${IMAGE} | ${VERSION} | ${DATE_FMT} | ${LINK} |\n"
+          done <<< "$RELEASES"
+          echo -e "$TABLE" > /tmp/release_table.md
           python3 << 'PYTHON_SCRIPT'
           content = open('README.md', 'r').read()
           new_table = open('/tmp/release_table.md', 'r').read()
@@ -38,17 +23,6 @@ jobs:
               exit(1)
           result = content[:content.index(start)+len(start)] + '\n' + new_table + '\n' + content[content.index(end):]
           open('README.md', 'w').write(result)
-          PYTHON_SCRIPT
+PYTHON_SCRIPT
         env:
-          GH_TOKEN:  $ {{ github.token }}
-      - name: Commit and push changes
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add README.md
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
-          else
-            git commit -m "docs: auto-update release index table"
-            git push
-          fi
+          GH_TOKEN: ${{ github.token }}
