@@ -22,6 +22,7 @@ jobs:
       - name: Check for New Version & Fetch Changelog
         id: check_version
         run: |
+          set -euo pipefail  # 👈 新增：防止 curl/jq 失败时静默假成功
           LATEST=$(curl -s "https://api.github.com/repos/${UPSTREAM_REPO}/releases/latest" \
             | jq -r '.tag_name' | sed 's/^v//')
 
@@ -64,7 +65,8 @@ jobs:
       - name: Pull & Export Docker Image
         if: steps.check_version.outputs.has_new == 'true'
         run: |
-          VERSION=${{ steps.check_version.outputs.version }}
+          set -euo pipefail   # 👈 防止 docker pull/save/gzip 管道任一环节失败被忽略
+          VERSION="${{ steps.check_version.outputs.version }}"
           docker pull "${DOCKER_IMAGE}:${VERSION}"
           docker save "${DOCKER_IMAGE}:${VERSION}" | gzip > "${DOCKER_IMAGE##*/}-${VERSION}.tar.gz"
 
