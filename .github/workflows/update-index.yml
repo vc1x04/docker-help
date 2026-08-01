@@ -1,56 +1,30 @@
+name: Update Release Index
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published, edited, deleted]
+
+permissions:
+  contents: write
+
+jobs:
+  update-index:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Rebuild Index Table
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # 获取所有 release 数据并输出为 JSON 供 Python 处理
-          gh release list --limit 100 --json tagName,publishedAt,name > /tmp/releases.json
+          
+          # 1. 获取数据并保存（沿用已验证可用的原始命令）
+          gh release list --limit 100 --json tagName,publishedAt,name \
 
-          python3 << 'PYTHON_SCRIPT'
-          import json, sys
-          from datetime import datetime
-
-          with open('/tmp/releases.json') as f:
-              releases = json.load(f)
-
-          # 解析并按镜像名分组
-          groups = {}
-          for r in releases:
-              tag = r['tagName']
-              date_str = r['publishedAt']
-              name = r['name']
-              # 从 release name 提取镜像名（去掉末尾版本号）
-              image = name.rsplit(' ', 1)[0] if ' ' in name else name
-              version = tag.lstrip('v')
-              try:
-                  date_fmt = datetime.fromisoformat(date_str.replace('Z', '+00:00')).strftime('%Y-%m-%d')
-              except Exception:
-                  date_fmt = date_str[:10]
-              link = f"[View](../../releases/tag/{tag})"
-              groups.setdefault(image, []).append((version, date_fmt, link))
-
-          # 按镜像名字母排序，组内按日期倒序
-          sorted_groups = sorted(groups.items(), key=lambda x: x[0].lower())
-          for img, entries in sorted_groups:
-              entries.sort(key=lambda x: x[1], reverse=True)
-
-          # 生成 Markdown 表格
-          lines = ["| 镜像 | 最新版本 | 更新时间 | Release |", "|------|---------|---------|--------|"]
-          for img, entries in sorted_groups:
-              for ver, date, link in entries:
-                  lines.append(f"| {img} | {ver} | {date} | {link} |")
-
-          table_md = '\n'.join(lines) + '\n'
-          with open('/tmp/release_table.md', 'w') as f:
-              f.write(table_md)
-
-          # 更新 README.md
-          content = open('README.md', 'r').read()
-          start = '<!-- AUTO-INDEX-START -->'
-          end = '<!-- AUTO-INDEX-END -->'
-          if start not in content or end not in content:
-              print('Error: Missing anchor comments in README.md', file=sys.stderr)
-              sys.exit(1)
-          result = content[:content.index(start)+len(start)] + '\n' + table_md + '\n' + content[content.index(end):]
-          open('README.md', 'w').write(result)
-          PYTHON_SCRIPT
+            | jq -r 'sort_by(.publishedAt) | reverse | .[] | "\(.tagName)|\(.publishedAt)|\(.name)"' \
+            > /tm
