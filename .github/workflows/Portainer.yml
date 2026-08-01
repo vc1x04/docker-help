@@ -1,4 +1,4 @@
-name: Download Vaultwarden Image
+name: Download portainer Image
 
 on:
   workflow_dispatch:
