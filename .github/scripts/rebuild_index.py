@@ -1,31 +1,34 @@
 import sys
 import os
+import json
 from datetime import datetime
 
 repo_root = os.environ.get('GITHUB_WORKSPACE', '.')
 readme_path = os.path.join(repo_root, 'README.md')
-raw_path = '/tmp/releases_raw.txt'
+raw_path = '/tmp/releases_raw.json'
+
+# 读取 gh 输出的原始 JSON
+with open(raw_path, 'r') as f:
+    releases = json.load(f)
 
 groups = {}
-with open(raw_path, 'r') as f:
-    for line in f:
-        line = line.strip()
-        if not line or '|' not in line:
-            continue
-        parts = line.split('|', 2)
-        if len(parts) != 3:
-            continue
-        tag, date_str, name = parts
-        name = name or tag
-        image = name.rsplit(' ', 1)[0].strip() if ' ' in name else name.strip()
-        version = tag.lstrip('v')
-        try:
-            date_fmt = datetime.fromisoformat(date_str.replace('Z', '+00:00')).strftime('%Y-%m-%d')
-        except Exception:
-            date_fmt = date_str[:10]
-        link = f"[View](../../releases/tag/{tag})"
-        groups.setdefault(image, []).append((version, date_fmt, link))
+for rel in releases:
+    tag = rel.get('tagName', '')
+    date_str = rel.get('publishedAt', '')
+    name = rel.get('name') or tag
 
+    image = name.rsplit(' ', 1)[0].strip() if ' ' in name else name.strip()
+    version = tag.lstrip('v')
+
+    try:
+        date_fmt = datetime.fromisoformat(date_str.replace('Z', '+00:00')).strftime('%Y-%m-%d')
+    except Exception:
+        date_fmt = date_str[:10]
+
+    link = f"[View](../../releases/tag/{tag})"
+    groups.setdefault(image, []).append((version, date_fmt, link))
+
+# 按镜像名排序，每个镜像内按日期倒序
 sorted_groups = sorted(groups.items(), key=lambda x: x[0].lower())
 for img, entries in sorted_groups:
     entries.sort(key=lambda x: x[1], reverse=True)
