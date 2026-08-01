@@ -2,20 +2,32 @@ name: Download AdGuard Home Image
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *'  # UTC 00:00（每日）
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Pull AdGuard Home Image
-        run: docker pull adguard/adguardhome:latest
+      - name: Get Latest AdGuard Home Version
+        id: version
+        run: |
+          VERSION=$(curl -s https://api.github.com/repos/AdguardTeam/AdGuardHome/releases/latest | jq -r '.tag_name' | sed 's/^v//')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Latest version: $VERSION"
 
-      - name: Save to File
-        run: docker save -o adguardhome-latest.tar adguard/adguardhome:latest
+      - name: Pull & Export Docker Image
+        run: |
+          docker pull adguard/adguardhome:${{ steps.version.outputs.version }}
+          docker save adguard/adguardhome:${{ steps.version.outputs.version }} | gzip > adguardhome-${{ steps.version.outputs.version }}.tar.gz
 
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v7.0.0
+      - name: Upload Docker Image Artifact
+        uses: actions/upload-artifact@v7.0.1
         with:
-          name: adguardhome-image
-          path:  adguardhome-latest.tar
+          name: adguardhome-${{ steps.version.outputs.version }}
+          path: adguardhome-${{ steps.version.outputs.version }}.tar.gz
+          archive: false
+          compression-level: 0
           retention-days: 1
+          if-no-files-found: error
+          overwrite: false
