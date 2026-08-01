@@ -27,10 +27,7 @@ jobs:
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE"
-          gh release list --limit 100 --json tagName,publishedAt,name \
-
-            | jq -r 'sort_by(.publishedAt) | reverse | .[] | "\(.tagName)|\(.publishedAt)|\(.name)"' \
-            > /tmp/releases_raw.txt
+          gh release list --limit 100 --json tagName,publishedAt,name > /tmp/releases_raw.json
           python3 .github/scripts/rebuild_index.py
 
       - name: Commit and push changes
