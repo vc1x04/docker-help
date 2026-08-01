@@ -68,7 +68,7 @@ jobs:
           set -euo pipefail   # 👈 防止 docker pull/save/gzip 管道任一环节失败被忽略
           VERSION="${{ steps.check_version.outputs.version }}"
           docker pull "${DOCKER_IMAGE}:${VERSION}"
-          docker save "${DOCKER_IMAGE}:${VERSION}" | gzip > "${DOCKER_IMAGE%%/*}-${VERSION}.tar.gz"
+          docker save "${DOCKER_IMAGE}:${VERSION}" | gzip > "${DOCKER_IMAGE//\//-}-${VERSION}.tar.gz"
 
       # 🚀 3. 创建 Release 并上传附件
       - name: Create Release and Upload Asset
