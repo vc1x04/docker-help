@@ -13,8 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # 👇 ====== 仅需修改以下两行即可适配新镜像 ======
-      DOCKER_IMAGE: "FreshRSS/FreshRSS"       # Docker Hub 镜像全名
-      UPSTREAM_REPO: "FreshRSS/FreshRSS"  # 对应的 GitHub 仓库 (owner/repo)
+      DOCKER_IMAGE: "freshrss/freshrss"       # Docker Hub 镜像全名
+      UPSTREAM_REPO: "freshrss/freshrss"  # 对应的 GitHub 仓库 (owner/repo)
       # 👆 ==========================================
 
     steps:
