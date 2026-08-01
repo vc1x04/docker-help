@@ -1,3 +1,23 @@
+name: Auto Update Release Index
+
+# ✅ 这里是触发事件，缺一不可
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-index:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Rebuild Index Table
         run: |
           set -euo pipefail
@@ -14,15 +34,28 @@
           done <<< "$RELEASES"
           echo -e "$TABLE" > /tmp/release_table.md
           python3 << 'PYTHON_SCRIPT'
-          content = open('README.md', 'r').read()
-          new_table = open('/tmp/release_table.md', 'r').read()
-          start = '<!-- AUTO-INDEX-START -->'
-          end = '<!-- AUTO-INDEX-END -->'
-          if start not in content or end not in content:
-              print('Error: Missing anchor comments in README.md', file=sys.stderr)
-              exit(1)
-          result = content[:content.index(start)+len(start)] + '\n' + new_table + '\n' + content[content.index(end):]
-          open('README.md', 'w').write(result)
+import sys
+content = open('README.md', 'r').read()
+new_table = open('/tmp/release_table.md', 'r').read()
+start = '<!-- AUTO-INDEX-START -->'
+end = '<!-- AUTO-INDEX-END -->'
+if start not in content or end not in content:
+    print('Error: Missing anchor comments in README.md', file=sys.stderr)
+    sys.exit(1)
+result = content[:content.index(start)+len(start)] + '\n' + new_table + '\n' + content[content.index(end):]
+open('README.md', 'w').write(result)
 PYTHON_SCRIPT
         env:
           GH_TOKEN: ${{ github.token }}
+
+      - name: Commit and push changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "docs: auto-update release index table"
+            git push
+          fi
