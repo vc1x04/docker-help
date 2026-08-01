@@ -1,3 +1,22 @@
+name: Update Release Index
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published, edited, deleted]
+
+permissions:
+  contents: write
+
+jobs:
+  update-index:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
       - name: Rebuild Index Table
         env:
           GH_TOKEN: ${{ github.token }}
@@ -29,4 +48,14 @@
           open('README.md', 'w').write(result)
           PYTHON_SCRIPT
 
-          # ← 这里必须保留一个空行！否则 Heredoc 结束标记会被吞掉
+      - name: Commit and push changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          if ! git diff --cached --quiet; then
+            git commit -m "docs: auto-update release index table"
+            git push
+          else
+            echo "No changes to commit"
+          fi
