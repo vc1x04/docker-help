@@ -7,11 +7,10 @@ repo_root = os.environ.get('GITHUB_WORKSPACE', '.')
 readme_path = os.path.join(repo_root, 'README.md')
 raw_path = '/tmp/releases_raw.json'
 
-# 读取 gh 输出的原始 JSON
 with open(raw_path, 'r') as f:
     releases = json.load(f)
 
-groups = {}
+latest = {}
 for rel in releases:
     tag = rel.get('tagName', '')
     date_str = rel.get('publishedAt', '')
@@ -26,20 +25,20 @@ for rel in releases:
         date_fmt = date_str[:10]
 
     link = f"[View](../../releases/tag/{tag})"
-    groups.setdefault(image, []).append((version, date_fmt, link))
 
-# 按镜像名排序，每个镜像内按日期倒序
-sorted_groups = sorted(groups.items(), key=lambda x: x[0].lower())
-for img, entries in sorted_groups:
-    entries.sort(key=lambda x: x[1], reverse=True)
+    # 核心改动：只保留每个镜像日期最新的一条
+    if image not in latest or date_fmt > latest[image][1]:
+        latest[image] = (version, date_fmt, link)
+
+# 按镜像名排序
+sorted_items = sorted(latest.items(), key=lambda x: x[0].lower())
 
 lines = [
     "| 镜像 | 最新版本 | 更新时间 | Release |",
     "|------|---------|---------|--------|"
 ]
-for img, entries in sorted_groups:
-    for ver, date, link in entries:
-        lines.append(f"| {img} | {ver} | {date} | {link} |")
+for img, (ver, date, link) in sorted_items:
+    lines.append(f"| {img} | {ver} | {date} | {link} |")
 
 table_md = '\n'.join(lines) + '\n'
 
