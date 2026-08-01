@@ -20,12 +20,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          # 获取最近100个release信息
           RELEASES=$(gh release list --limit 100 --json tagName,publishedAt,name \
 
             | jq -r 'sort_by(.publishedAt) | reverse | .[] | "\(.tagName)|\(.publishedAt)|\(.name)"')
 
-          # 构建Markdown表格内容
           TABLE="| 镜像 | 最新版本 | 更新时间 | Release |\n"
           TABLE+="|------|---------|---------|--------|\n"
 
@@ -38,7 +36,6 @@ jobs:
             TABLE+="| ${IMAGE} | ${VERSION} | ${DATE_FMT} | ${LINK} |\n"
           done <<< "$RELEASES"
 
-          # 使用Python安全替换锚点间内容，避免shell特殊字符导致的语法错误
           python3 -c "
           import sys
           content = open('README.md', 'r').read()
