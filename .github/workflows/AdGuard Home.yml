@@ -32,16 +32,21 @@ jobs:
             UPSTREAM_BODY=$(curl -s https://api.github.com/repos/AdguardTeam/AdGuardHome/releases/latest | jq -r '.body')
             [ "$UPSTREAM_BODY" = "null" ] && UPSTREAM_BODY="*No release notes provided by upstream.*"
 
-            # ✅ 关键修复：使用 printf 替代 heredoc，彻底避免 YAML 对 ## 和特殊符号的解析冲突
-            printf '%s\n' \
-              "## 📦 AdGuard Home Docker Mirror" \
-              "- **Version**: \`${LATEST}\`" \
-              "- **Image**: \`adguard/adguardhome:${LATEST}\`" \
-              "- **Source**: [Upstream Release](https://github.com/AdguardTeam/AdGuardHome/releases/tag/v${LATEST})" \
-              "" \
-              "---" \
-              "" \
-              "${UPSTREAM_BODY}" > release-body.md
+            # ✅ 安全写入：静态模板用单引号 Heredoc 避免 YAML/Shell 误解析
+            cat > release-body.md <<'TEMPLATE_EOF'
+          ## 📦 AdGuard Home Docker Mirror
+          TEMPLATE_EOF
+
+            # ✅ 动态内容单独追加：echo 的单变量参数不会被内容中的双引号撕裂
+            {
+              echo "- **Version**: \`${LATEST}\`"
+              echo "- **Image**: \`adguard/adguardhome:${LATEST}\`"
+              echo "- **Source**: [Upstream Release](https://github.com/AdguardTeam/AdGuardHome/releases/tag/v${LATEST})"
+              echo ""
+              echo "---"
+              echo ""
+              echo "${UPSTREAM_BODY}"
+            } >> release-body.md
 
             echo "🆕 New version found: ${LATEST}, changelog fetched."
           fi
@@ -62,9 +67,10 @@ jobs:
           tag_name: v${{ steps.check_version.outputs.version }}
           name: AdGuard Home ${{ steps.check_version.outputs.version }}
           body_path: release-body.md
-          files: |
-            adguardhome-${{ steps.check_version.outputs.version }}.tar.gz
+          overwrite_files: true
           fail_on_unmatched_files: true
           make_latest: "true"
           draft: false
           prerelease: false
+          files: |
+            adguardhome-${{ steps.check_version.outputs.version }}.tar.gz
