@@ -3,31 +3,57 @@ name: Download AdGuard Home Image
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 0 * * *'  # UTC 00:00（每日）
+    - cron: '0 0 * * *'  # UTC 00:00 每日触发
+
+permissions:
+  contents: write  # v3 官方明确要求此权限
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Get Latest AdGuard Home Version
-        id: version
+      # 🔍 版本比对（核心守门逻辑）
+      - name: Check for New Version
+        id: check_version
         run: |
-          VERSION=$(curl -s https://api.github.com/repos/AdguardTeam/AdGuardHome/releases/latest | jq -r '.tag_name' | sed 's/^v//')
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Latest version: $VERSION"
+          LATEST=$(curl -s https://api.github.com/repos/AdguardTeam/AdGuardHome/releases/latest | jq -r '.tag_name' | sed 's/^v//')
+          TAG="v${LATEST}"
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: token ${{ github.token }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${TAG}")
+          
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "has_new=false" >> $GITHUB_OUTPUT
+            echo "✅ Version ${LATEST} already exists, skipping."
+          else
+            echo "has_new=true" >> $GITHUB_OUTPUT
+            echo "version=${LATEST}" >> $GITHUB_OUTPUT
+            echo "🆕 New version found: ${LATEST}"
+          fi
 
+      # ⬇️ 仅在有新版时拉取镜像
       - name: Pull & Export Docker Image
+        if: steps.check_version.outputs.has_new == 'true'
         run: |
-          docker pull adguard/adguardhome:${{ steps.version.outputs.version }}
-          docker save adguard/adguardhome:${{ steps.version.outputs.version }} | gzip > adguardhome-${{ steps.version.outputs.version }}.tar.gz
+          VERSION=${{ steps.check_version.outputs.version }}
+          docker pull adguard/adguardhome:${VERSION}
+          docker save adguard/adguardhome:${VERSION} | gzip > adguardhome-${VERSION}.tar.gz
 
-      - name: Upload Docker Image Artifact
-        uses: actions/upload-artifact@v7.0.1
+      # 🚀 完全对齐 v3 官方规范的 Release 上传
+      - name: Create Release and Upload Asset
+        if: steps.check_version.outputs.has_new == 'true'
+        uses: softprops/action-gh-release@v3
         with:
-          name: adguardhome-${{ steps.version.outputs.version }}
-          path: adguardhome-${{ steps.version.outputs.version }}.tar.gz
-          archive: false
-          compression-level: 0
-          retention-days: 1
-          if-no-files-found: error
-          overwrite: true
+          tag_name: v${{ steps.check_version.outputs.version }}
+          name: AdGuard Home ${{ steps.check_version.outputs.version }}
+          body: |
+            ## AdGuard Home Docker Image
+            - **Version**: `${{ steps.check_version.outputs.version }}`
+            - **Source**: [Upstream Release](https://github.com/AdguardTeam/AdGuardHome/releases/tag/v${{ steps.check_version.outputs.version }})
+          files: |
+            adguardhome-${{ steps.check_version.outputs.version }}.tar.gz
+          fail_on_unmatched_files: true
+          make_latest: "true"
+          draft: false
+          prerelease: false
+          # token 省略即默认使用 ${{ github.token }}，符合 v3 最佳实践
