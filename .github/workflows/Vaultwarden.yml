@@ -22,9 +22,8 @@ jobs:
       - name: Check for New Version & Fetch Changelog
         id: check_version
         run: |
-          set -euo pipefail
+          set -euo pipefail  # 👈 新增：防止 curl/jq 失败时静默假成功
           LATEST=$(curl -s "https://api.github.com/repos/${UPSTREAM_REPO}/releases/latest" \
-
             | jq -r '.tag_name' | sed 's/^v//')
 
           TAG="v${LATEST}"
@@ -38,21 +37,17 @@ jobs:
           else
             echo "has_new=true" >> $GITHUB_OUTPUT
             echo "version=${LATEST}" >> $GITHUB_OUTPUT
-            
-            # 👇 【改动1】提取纯容器名并输出完整附件文件名
-            IMAGE_NAME="${DOCKER_IMAGE##*/}"
-            echo "image_name=${IMAGE_NAME}" >> $GITHUB_OUTPUT
-            echo "asset_file=${IMAGE_NAME}-${LATEST}.tar.gz" >> $GITHUB_OUTPUT
 
             UPSTREAM_BODY=$(curl -s "https://api.github.com/repos/${UPSTREAM_REPO}/releases/latest" \
-
               | jq -r '.body')
             [ "$UPSTREAM_BODY" = "null" ] && UPSTREAM_BODY="*No release notes provided by upstream.*"
 
+            # ✅ 安全写入：静态模板用单引号 Heredoc 避免 YAML/Shell 误解析
             cat > release-body.md <<'TEMPLATE_EOF'
           ## 📦 Docker Image Mirror
           TEMPLATE_EOF
 
+            # ✅ 动态内容单独追加：echo 的单变量参数不会被内容中的双引号撕裂
             {
               echo "- **Version**: \`${LATEST}\`"
               echo "- **Image**: \`${DOCKER_IMAGE}:${LATEST}\`"
@@ -70,13 +65,10 @@ jobs:
       - name: Pull & Export Docker Image
         if: steps.check_version.outputs.has_new == 'true'
         run: |
-          set -euo pipefail
+          set -euo pipefail   # 👈 防止 docker pull/save/gzip 管道任一环节失败被忽略
           VERSION="${{ steps.check_version.outputs.version }}"
-          ASSET_FILE="${{ steps.check_version.outputs.asset_file }}"
-          
           docker pull "${DOCKER_IMAGE}:${VERSION}"
-          # 👇 【改动2】使用精确的附件文件名替代 %%/* 语法
-          docker save "${DOCKER_IMAGE}:${VERSION}" | gzip > "${ASSET_FILE}"
+          docker save "${DOCKER_IMAGE}:${VERSION}" | gzip > "${DOCKER_IMAGE%%/*}-${VERSION}.tar.gz"
 
       # 🚀 3. 创建 Release 并上传附件
       - name: Create Release and Upload Asset
@@ -84,13 +76,12 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ steps.check_version.outputs.version }}
-          # 👇 【改动3】标题改为 容器名-版本号
-          name: "${{ steps.check_version.outputs.image_name }}-${{ steps.check_version.outputs.version }}"
+          name: "${{ env.DOCKER_IMAGE%%/* }} ${{ steps.check_version.outputs.version }}"
           body_path: release-body.md
           overwrite_files: true
           fail_on_unmatched_files: true
           make_latest: "true"
           draft: false
           prerelease: false
-          # 👇 【改动4】用精确文件名替代通配符 *.tar.gz
-          files: ${{ steps.check_version.outputs.asset_file }}
+          files: |
+            *.tar.gz
