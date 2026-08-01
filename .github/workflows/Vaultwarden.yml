@@ -76,7 +76,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ steps.check_version.outputs.version }}
-          name: "${{ env.DOCKER_IMAGE%%/* }} ${{ steps.check_version.outputs.version }}"
+          name: "${{ env.DOCKER_IMAGE }} ${{ steps.check_version.outputs.version }}"
           body_path: release-body.md
           overwrite_files: true
           fail_on_unmatched_files: true
