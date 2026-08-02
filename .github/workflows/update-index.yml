@@ -19,6 +19,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
         with:
+          ref: ${{ github.event.repository.default_branch }} # 🔑 修复1: 强制拉取主分支最新代码
+
           fetch-depth: 1
 
       - name: Fetch releases and rebuild index
@@ -38,7 +40,7 @@ jobs:
           git add README.md
           if ! git diff --cached --quiet; then
             git commit -m "docs: auto-update release index table"
-            git push
+            git push origin "$BRANCH" # 🔑 修复3: 显式指定推送目标分支
           else
             echo "No changes to commit"
           fi
