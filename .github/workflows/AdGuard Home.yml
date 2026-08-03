@@ -93,7 +93,7 @@ jobs:
             *.tar.gz
 
       # 📋 4. 触发 index 更新（重建 README 发布索引表）
-      - name: Trigger Index Update
+      - name: 触发索引更新
         if: steps.check_version.outputs.has_new == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
