@@ -1,21 +1,101 @@
-name: OpenClaw Image
+name: Download openclaw Image
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *'  # UTC 00:00 每日触发
+
+permissions:
+  contents: write
+  actions: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # 👇 ====== 仅需修改以下两行即可适配新镜像 ======
+      DOCKER_IMAGE: "ghcr.io/openclaw/openclaw"       # Docker Hub 镜像全名
+      UPSTREAM_REPO: "openclaw/openclaw"  # 对应的 GitHub 仓库 (owner/repo)
+      # 👆 ==========================================
+
     steps:
-      - name: Pull OpenClaw Image
-        run: docker pull ghcr.io/openclaw/openclaw:latest
+      # 🔍 1. 版本比对 + 拉取上游更新日志
+      - name: Check for New Version & Fetch Changelog
+        id: check_version
+        run: |
+          # ✅ [修复] 将管道符 | 放在行尾实现自然续行，替代脆弱的 \ 续行
+          # 原因：\ 后若存在不可见空格/Tab 会导致 "syntax error near unexpected token '|'"
+          LATEST=$(curl -s "https://api.github.com/repos/${UPSTREAM_REPO}/releases/latest" |
+            jq -r '.tag_name' |
+            sed 's/^v//')
 
-      - name: Save to File
-        run: docker save -o openclaw-latest.tar ghcr.io/openclaw/openclaw:latest
+          TAG="v${LATEST}"
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: token ${{ github.token }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${TAG}")
 
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v7.0.0
+          if [ "$HTTP_CODE" = "200" ]; then
+            # ✅ [优化] GITHUB_OUTPUT 加双引号，防止路径含特殊字符时写入失败
+            echo "has_new=false" >> "$GITHUB_OUTPUT"
+            echo "✅ Version ${LATEST} already exists, skipping."
+          else
+            echo "has_new=true" >> "$GITHUB_OUTPUT"
+            echo "version=${LATEST}" >> "$GITHUB_OUTPUT"
+
+            # ✅ [修复] 同上，管道符行尾续行替代 \ 续行
+            UPSTREAM_BODY=$(curl -s "https://api.github.com/repos/${UPSTREAM_REPO}/releases/latest" |
+              jq -r '.body')
+            [ "$UPSTREAM_BODY" = "null" ] && UPSTREAM_BODY="*No release notes provided by upstream.*"
+
+            # ✅ 安全写入：静态模板用单引号 Heredoc 避免 YAML/Shell 误解析
+            # ✅ [修复] 使用 <<- 语法，允许结束标记 TEMPLATE_EOF 带缩进
+            # 同时 <<- 会自动剥离内容中的前导 Tab，避免生成的 Markdown 包含多余缩进
+            cat > release-body.md <<-'TEMPLATE_EOF'
+          ## 📦 Docker Image Mirror
+          TEMPLATE_EOF
+
+            # ✅ 动态内容单独追加：echo 的单变量参数不会被内容中的双引号撕裂
+            {
+              echo "- **Version**: \`${LATEST}\`"
+              echo "- **Image**: \`${DOCKER_IMAGE}:${LATEST}\`"
+              echo "- **Source**: [Upstream Release](https://github.com/${UPSTREAM_REPO}/releases/tag/v${LATEST})"
+              echo ""
+              echo "---"
+              echo ""
+              echo "${UPSTREAM_BODY}"
+            } >> release-body.md
+
+            echo "🆕 New version found: ${LATEST}, changelog fetched."
+          fi
+
+      # ⬇️ 2. 仅在有新版时拉取并导出镜像
+      - name: Pull & Export Docker Image
+        if: steps.check_version.outputs.has_new == 'true'
+        run: |
+          VERSION="${{ steps.check_version.outputs.version }}"
+          docker pull "${DOCKER_IMAGE}:${VERSION}"
+          docker save "${DOCKER_IMAGE}:${VERSION}" | gzip > "${DOCKER_IMAGE##*/}-${VERSION}.tar.gz"
+
+      # 🚀 3. 创建 Release 并上传附件
+      - name: Create Release and Upload Asset
+        if: steps.check_version.outputs.has_new == 'true'
+        uses: softprops/action-gh-release@v3
         with:
-          name: OpenClaw Image
-          path:  openclaw-latest.tar
-          retention-days: 1
+          tag_name: v${{ steps.check_version.outputs.version }}
+          name: "${{ env.DOCKER_IMAGE }} ${{ steps.check_version.outputs.version }}"
+          body_path: release-body.md
+          overwrite_files: true
+          fail_on_unmatched_files: true
+          make_latest: "false"
+          draft: false
+          prerelease: false
+          files: |
+            *.tar.gz
+
+      # 📋 4. 触发 index 更新（重建 README 发布索引表）
+      - name: Trigger Index Update
+        if: steps.check_version.outputs.has_new == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run "update-index.yml" --repo "${{ github.repository }}"
