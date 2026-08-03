@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   build:
@@ -90,3 +91,11 @@ jobs:
           prerelease: false
           files: |
             *.tar.gz
+
+      # 📋 4. 触发 index 更新（重建 README 发布索引表）
+      - name: Trigger Index Update
+        if: steps.check_version.outputs.has_new == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run "update-index.yml" --repo "${{ github.repository }}"
