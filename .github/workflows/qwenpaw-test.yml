@@ -2,8 +2,6 @@ name: Download qwenpaw-test Image
 
 on:
   workflow_dispatch:
-  # schedule:  # 测试用，暂不启用定时触发，避免与正式 qwenpaw.yml 冲突
-  #   - cron: '0 0 * * *'  # UTC 00:00 每日触发
 
 permissions:
   contents: write
@@ -18,17 +16,23 @@ jobs:
       UPSTREAM_REPO: "agentscope-ai/QwenPaw"      # GitHub 仓库 (仅 release 模式使用)
       # 同步模式：
       #   release = 按 GitHub Release Tag 拉取对应版本镜像（需 UPSTREAM_REPO）
-      #   latest  = 拉取 :latest 滚动 tag，并从镜像内部提取版本号
+      #   latest  = 拉取 :latest 滚动 tag，先从镜像内部提取版本号
+      #      并用 manifest digest 轻量预判，digest 未变则跳过拉取
       SYNC_MODE: "latest"
+      # 记录上次 latest digest 的状态文件（提交到仓库，用于跨运行比对）
+      STATE_FILE: ".github/workflows/qwenpaw-test-latest.digest"
       # =========================
 
     steps:
+      - name: Checkout 仓库
+        uses: actions/checkout@v4
+
       # 🔍 1. 检测版本（按 SYNC_MODE 自动分流）
       - name: 检测版本
         id: check_version
         run: |
           if [ "$SYNC_MODE" = "release" ]; then
-            # —— Release Tag 模式：从 GitHub 最新 Release 获取版本号 ——
+            # —— Release Tag 模式：从 GitHub 最新 Release 获取版本号（轻量，仅 API）——
             LATEST=$(curl -s "https://api.github.com/repos/${UPSTREAM_REPO}/releases/latest" |
               jq -r '.tag_name' |
               sed 's/^v//')
@@ -36,28 +40,43 @@ jobs:
             echo "mode=release" >> "$GITHUB_OUTPUT"
             echo "version=${LATEST}" >> "$GITHUB_OUTPUT"
             echo "pull_tag=${LATEST}" >> "$GITHUB_OUTPUT"
+            echo "has_new=true" >> "$GITHUB_OUTPUT"
             echo "🆕 Release 模式，版本: ${LATEST}"
           elif [ "$SYNC_MODE" = "latest" ]; then
-            # —— Rolling Latest 模式：拉取 :latest 并从镜像内部提取版本号 ——
-            docker pull "${DOCKER_IMAGE}:latest"
-            RAW=$(docker run --rm "${DOCKER_IMAGE}:latest" pip show qwenpaw 2>/dev/null | awk '/^Version: /{print $2}')
-            if [ -z "$RAW" ]; then
-              RAW=$(docker run --rm "${DOCKER_IMAGE}:latest" python -c "from importlib.metadata import version; print(version('qwenpaw'))" 2>/dev/null)
-            fi
-            [ -n "$RAW" ] || { echo "❌ 无法从镜像中提取版本号"; exit 1; }
-            VERSION="${RAW#v}"
+            # —— Rolling Latest 模式：manifest digest 轻量预判，避免每天拉大镜像 ——
+            UP_DIGEST=$(docker buildx imagetools inspect "${DOCKER_IMAGE}:latest" --format '{{.Manifest.Digest}}')
+            echo "上游 manifest digest: ${UP_DIGEST}"
+            LAST_DIGEST=""
+            [ -f "$STATE_FILE" ] && LAST_DIGEST=$(cat "$STATE_FILE")
+            echo "上次 digest: ${LAST_DIGEST:-<无记录>}"
             echo "mode=latest" >> "$GITHUB_OUTPUT"
-            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-            echo "pull_tag=latest" >> "$GITHUB_OUTPUT"
-            echo "🆕 Latest 模式，镜像版本: ${VERSION}"
+            echo "digest=${UP_DIGEST}" >> "$GITHUB_OUTPUT"
+            if [ "$UP_DIGEST" = "$LAST_DIGEST" ]; then
+              echo "digest 未变化，跳过拉取。"
+              echo "has_new=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "digest 已变化，拉取镜像并提取版本号。"
+              docker pull "${DOCKER_IMAGE}:latest"
+              RAW=$(docker run --rm "${DOCKER_IMAGE}:latest" pip show qwenpaw 2>/dev/null | awk '/^Version: /{print $2}')
+              if [ -z "$RAW" ]; then
+                RAW=$(docker run --rm "${DOCKER_IMAGE}:latest" python -c "from importlib.metadata import version; print(version('qwenpaw'))" 2>/dev/null)
+              fi
+              [ -n "$RAW" ] || { echo "❌ 无法从镜像中提取版本号"; exit 1; }
+              VERSION="${RAW#v}"
+              echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+              echo "pull_tag=latest" >> "$GITHUB_OUTPUT"
+              echo "has_new=true" >> "$GITHUB_OUTPUT"
+              echo "🆕 Latest 模式，镜像版本: ${VERSION}"
+            fi
           else
             echo "❌ 未知 SYNC_MODE: ${SYNC_MODE}（可选 release / latest）"
             exit 1
           fi
 
-      # ✅ 2. 检查该版本是否已发布（复用）
+      # ✅ 2. 检查该版本是否已发布（gate，两种模式复用）
       - name: 检查版本是否已发布
         id: check
+        if: steps.check_version.outputs.has_new == 'true'
         run: |
           TAG="v${{ steps.check_version.outputs.version }}"
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
@@ -121,10 +140,16 @@ jobs:
           files: |
             *.tar.gz
 
-      # 📋 6. 触发 index 更新（测试用暂不启用，避免测试产物污染 README 索引）
-      # - name: 触发索引更新
-      #   if: steps.check.outputs.has_new == 'true'
-      #   env:
-      #     GH_TOKEN: ${{ github.token }}
-      #   run: |
-      #     gh workflow run "update-index.yml" --repo "${{ github.repository }}"
+      # 📋 6. 更新 latest digest 状态文件（digest 变化即记录，避免下次重复拉取）
+      - name: 更新 latest digest 状态
+        if: steps.check_version.outputs.has_new == 'true'
+        run: |
+          UP_DIGEST="${{ steps.check_version.outputs.digest }}"
+          echo "$UP_DIGEST" > "$STATE_FILE"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$STATE_FILE"
+          git commit -m "chore: update ${DOCKER_IMAGE} latest digest" || echo "无变更，跳过提交"
+          git push
+        env:
+          GH_TOKEN: ${{ github.token }}
