@@ -1,0 +1,154 @@
+name: Download dpanel-lite Image (验证)
+
+# ⚠️ 验证工作流：用于验证「滚动 tag(lite)」场景下模板逻辑是否可用
+# 与 dpanel.yml 完全独立，互不干扰，不影响原文件。
+# Release 使用 v<version>-lite 作为独立 tag，避免与 dpanel.yml 的 v<version> 冲突。
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *'  # UTC 00:00 每日触发
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      DOCKER_IMAGE: "dpanel/dpanel"       # Docker Hub 镜像全名
+      UPSTREAM_REPO: "donknap/dpanel"     # 对应的 GitHub 仓库 (owner/repo)
+      IMAGE_SHORT: "dpanel"                # 导出文件名用，取镜像名最后一段
+      # 🔍 本次要验证的镜像 tag（lite 滚动 tag）
+      IMAGE_TAG: "lite"
+      # 发布 tag 后缀，用于区分 lite 构建与版本构建，避免 Release 冲突
+      REL_SUFFIX: "-lite"
+
+    steps:
+      # 🔍 0. 镜像 tag digest 探测（验证 lite 与版本 tag 的关系）
+      - name: 探测镜像 tag digest
+        id: probe
+        run: |
+          set -euo pipefail
+          echo "=== 探测 ${DOCKER_IMAGE} 各 tag 的 digest ==="
+          for tag in "${IMAGE_TAG}" latest 1.10.6; do
+            dig=$(docker manifest inspect "${DOCKER_IMAGE}:${tag}" 2>/dev/null | jq -r '.config.digest // .manifests[0].digest // "N/A"' 2>/dev/null || echo "N/A")
+            echo "  ${tag} -> ${dig}"
+          done
+          echo "=== 对比: ${IMAGE_TAG} 与 1.10.6 ==="
+          DIG_LITE=$(docker manifest inspect "${DOCKER_IMAGE}:${IMAGE_TAG}" 2>/dev/null | jq -r '.config.digest // empty' 2>/dev/null || echo "")
+          DIG_VER=$(docker manifest inspect "${DOCKER_IMAGE}:1.10.6" 2>/dev/null | jq -r '.config.digest // empty' 2>/dev/null || echo "")
+          if [ -n "$DIG_LITE" ] && [ "$DIG_LITE" = "$DIG_VER" ]; then
+            echo "✅ ${IMAGE_TAG} 与 1.10.6 是同一镜像 (digest 一致)"
+            echo "same_as_version=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "⚠️ ${IMAGE_TAG} 与 1.10.6 不是同一镜像 (digest 不同)"
+            echo "same_as_version=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 🔍 1. 版本比对（针对 lite 独立发布 tag，避免与 dpanel.yml 冲突）
+      - name: 检查新版本并获取更新日志
+        id: check_version
+        run: |
+          set -euo pipefail
+          RESP=$(curl -s "https://api.github.com/repos/${UPSTREAM_REPO}/releases/latest")
+          LATEST=$(echo "$RESP" | jq -r '.tag_name // empty' | sed 's/^v//')
+          [ -n "$LATEST" ] || { echo "❌ 无法获取上游版本号"; exit 1; }
+
+          # 校验本仓库是否已存在 v<version>-lite 这个 Release
+          TAG="v${LATEST}${REL_SUFFIX}"
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: token ${{ github.token }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${TAG}")
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "has_new=false" >> "$GITHUB_OUTPUT"
+            echo "✅ Version ${LATEST}${REL_SUFFIX} already exists, skipping."
+          else
+            echo "has_new=true" >> "$GITHUB_OUTPUT"
+            echo "version=${LATEST}" >> "$GITHUB_OUTPUT"
+            UPSTREAM_BODY=$(echo "$RESP" | jq -r '.body')
+            [ "$UPSTREAM_BODY" = "null" ] && UPSTREAM_BODY="*No release notes provided by upstream.*"
+            echo "$UPSTREAM_BODY" > "${RUNNER_TEMP}/upstream_body.md"
+            echo "🆕 New version found: ${LATEST}, changelog cached."
+          fi
+
+      # ⬇️ 2. 拉取并导出（用 IMAGE_TAG 指定的 lite tag）
+      - name: 拉取并导出 Docker 镜像
+        if: steps.check_version.outputs.has_new == 'true'
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.check_version.outputs.version }}"
+          docker pull "${DOCKER_IMAGE}:${IMAGE_TAG}"
+          docker save "${DOCKER_IMAGE}:${IMAGE_TAG}" | gzip > "${IMAGE_SHORT}-${IMAGE_TAG}-${VERSION}.tar.gz"
+
+      # 🔐 3. 计算导出包 SHA256
+      - name: 计算镜像包 SHA256
+        if: steps.check_version.outputs.has_new == 'true'
+        id: file_sha
+        run: |
+          VERSION="${{ steps.check_version.outputs.version }}"
+          SHA=$(sha256sum "${IMAGE_SHORT}-${IMAGE_TAG}-${VERSION}.tar.gz" | awk '{print $1}')
+          echo "sha256=${SHA}" >> "$GITHUB_OUTPUT"
+
+      # 📝 4. 组装 Release 说明
+      - name: 组装 Release 说明
+        if: steps.check_version.outputs.has_new == 'true'
+        run: |
+          if [ -f "${RUNNER_TEMP}/upstream_body.md" ]; then
+            echo "✅ 已找到缓存文件: ${RUNNER_TEMP}/upstream_body.md ($(wc -c < "${RUNNER_TEMP}/upstream_body.md") bytes)"
+          else
+            echo "⚠️ 警告: 缓存文件不存在: ${RUNNER_TEMP}/upstream_body.md"
+          fi
+          UPSTREAM_BODY=$(cat "${RUNNER_TEMP}/upstream_body.md")
+
+          cat > release-body.md <<-'TEMPLATE_EOF'
+          ## 📦 Docker Image Mirror (lite)
+          TEMPLATE_EOF
+          {
+            echo "- **Version**: \`${{ steps.check_version.outputs.version }}\`"
+            echo "- **Image**: \`${DOCKER_IMAGE}:${IMAGE_TAG}\`"
+            echo "- **Tag**: \`${IMAGE_TAG}\` (滚动 tag，无 Nginx，配合外部反代使用)"
+            echo "- **Source**: [Upstream Release](https://github.com/${UPSTREAM_REPO}/releases/tag/v${{ steps.check_version.outputs.version }})"
+            echo ""
+            echo "---"
+            echo ""
+            echo "${UPSTREAM_BODY}"
+            echo ""
+            echo "---"
+            echo ""
+            echo "### 🔐 校验信息"
+            echo "- **包名**: \`${IMAGE_SHORT}-${IMAGE_TAG}-${{ steps.check_version.outputs.version }}.tar.gz\`"
+            echo "- **SHA256**: \`${{ steps.file_sha.outputs.sha256 }}\`"
+            echo ""
+            echo "校验命令："
+            echo "\`\`\`bash"
+            echo "wget https://github.com/${{ github.repository }}/releases/download/v${{ steps.check_version.outputs.version }}${REL_SUFFIX}/${IMAGE_SHORT}-${IMAGE_TAG}-${{ steps.check_version.outputs.version }}.tar.gz"
+            echo "echo \"${{ steps.file_sha.outputs.sha256 }}  ${IMAGE_SHORT}-${IMAGE_TAG}-${{ steps.check_version.outputs.version }}.tar.gz\" | sha256sum -c"
+            echo "\`\`\`"
+          } >> release-body.md
+
+      # 🚀 5. 创建 Release 并上传附件（独立 -lite tag）
+      - name: 创建 Release 并上传附件
+        if: steps.check_version.outputs.has_new == 'true'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ steps.check_version.outputs.version }}${{ env.REL_SUFFIX }}
+          name: "${{ env.DOCKER_IMAGE }} lite ${{ steps.check_version.outputs.version }}"
+          body_path: release-body.md
+          overwrite_files: true
+          fail_on_unmatched_files: true
+          make_latest: "false"
+          draft: false
+          prerelease: false
+          files: |
+            *.tar.gz
+
+      # 📋 6. 触发索引更新
+      - name: 触发索引更新
+        if: steps.check_version.outputs.has_new == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run "update-index.yml" --repo "${{ github.repository }}"
