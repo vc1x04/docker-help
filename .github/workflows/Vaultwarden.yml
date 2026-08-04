@@ -7,63 +7,107 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      # 👇 ====== 仅需修改以下两行即可适配新镜像 ======
+      # 👇 ====== 仅需修改以下三行即可适配新镜像 ======
       DOCKER_IMAGE: "vaultwarden/server"       # Docker Hub 镜像全名
-      UPSTREAM_REPO: "dani-garcia/vaultwarden"  # 对应的 GitHub 仓库 (owner/repo)
+      UPSTREAM_REPO: "dani-garcia/vaultwarden"     # 对应的 GitHub 仓库 (owner/repo)
+      IMAGE_SHORT: "vaultwarden"                # 导出文件名用，取镜像名最后一段
       # 👆 ==========================================
 
     steps:
-      # 🔍 1. 版本比对 + 拉取上游更新日志
-      - name: Check for New Version & Fetch Changelog
+      # 🔍 1. 版本比对 + 一次请求拉取上游更新日志
+      - name: 检查新版本并获取更新日志
         id: check_version
         run: |
-          set -euo pipefail  # 👈 新增：防止 curl/jq 失败时静默假成功
-          LATEST=$(curl -s "https://api.github.com/repos/${UPSTREAM_REPO}/releases/latest" \
-            | jq -r '.tag_name' | sed 's/^v//')
+          set -euo pipefail
+          # ✅ 单次请求同时取 tag 与 body，保证版本号与说明同源，避免错位
+          RESP=$(curl -s "https://api.github.com/repos/${UPSTREAM_REPO}/releases/latest")
+          LATEST=$(echo "$RESP" | jq -r '.tag_name // empty' | sed 's/^v//')
+          [ -n "$LATEST" ] || { echo "❌ 无法获取上游版本号"; exit 1; }
+
           TAG="v${LATEST}"
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
             -H "Authorization: token ${{ github.token }}" \
             "https://api.github.com/repos/${{ github.repository }}/releases/tags/${TAG}")
+
           if [ "$HTTP_CODE" = "200" ]; then
-            echo "has_new=false" >> $GITHUB_OUTPUT
+            echo "has_new=false" >> "$GITHUB_OUTPUT"
             echo "✅ Version ${LATEST} already exists, skipping."
           else
-            echo "has_new=true" >> $GITHUB_OUTPUT
-            echo "version=${LATEST}" >> $GITHUB_OUTPUT
-            UPSTREAM_BODY=$(curl -s "https://api.github.com/repos/${UPSTREAM_REPO}/releases/latest" \
-              | jq -r '.body')
+            echo "has_new=true" >> "$GITHUB_OUTPUT"
+            echo "version=${LATEST}" >> "$GITHUB_OUTPUT"
+
+            # ✅ 与 tag 同源取 body，写入临时文件跨步骤保留
+            UPSTREAM_BODY=$(echo "$RESP" | jq -r '.body')
             [ "$UPSTREAM_BODY" = "null" ] && UPSTREAM_BODY="*No release notes provided by upstream.*"
-            # ✅ 安全写入：静态模板用单引号 Heredoc 避免 YAML/Shell 误解析
-            cat > release-body.md <<'TEMPLATE_EOF'
-          ## 📦 Docker Image Mirror
-          TEMPLATE_EOF
-            # ✅ 动态内容单独追加：echo 的单变量参数不会被内容中的双引号撕裂
-            {
-              echo "- **Version**: \`${LATEST}\`"
-              echo "- **Image**: \`${DOCKER_IMAGE}:${LATEST}\`"
-              echo "- **Source**: [Upstream Release](https://github.com/${UPSTREAM_REPO}/releases/tag/v${LATEST})"
-              echo ""
-              echo "---"
-              echo ""
-              echo "${UPSTREAM_BODY}"
-            } >> release-body.md
-            echo "🆕 New version found: ${LATEST}, changelog fetched."
+            echo "$UPSTREAM_BODY" > "${RUNNER_TEMP}/upstream_body.md"
+            echo "🆕 New version found: ${LATEST}, changelog cached."
           fi
+
       # ⬇️ 2. 仅在有新版时拉取并导出镜像
-      - name: Pull & Export Docker Image
+      - name: 拉取并导出 Docker 镜像
         if: steps.check_version.outputs.has_new == 'true'
         run: |
-          set -euo pipefail   # 👈 防止 docker pull/save/gzip 管道任一环节失败被忽略
+          set -euo pipefail
           VERSION="${{ steps.check_version.outputs.version }}"
           docker pull "${DOCKER_IMAGE}:${VERSION}"
-          docker save "${DOCKER_IMAGE}:${VERSION}" | gzip > "${DOCKER_IMAGE%%/*}-${VERSION}.tar.gz"
-      # 🚀 3. 创建 Release 并上传附件
-      - name: Create Release and Upload Asset
+          docker save "${DOCKER_IMAGE}:${VERSION}" | gzip > "${IMAGE_SHORT}-${VERSION}.tar.gz"
+
+      # 🔐 3. 计算导出包 SHA256（供用户校验下载完整性）
+      - name: 计算镜像包 SHA256
+        if: steps.check_version.outputs.has_new == 'true'
+        id: file_sha
+        run: |
+          VERSION="${{ steps.check_version.outputs.version }}"
+          SHA=$(sha256sum "${IMAGE_SHORT}-${VERSION}.tar.gz" | awk '{print $1}')
+          echo "sha256=${SHA}" >> "$GITHUB_OUTPUT"
+
+      # 📝 4. 组装 Release 说明（此时 version 与 SHA 均已就绪）
+      - name: 组装 Release 说明
+        if: steps.check_version.outputs.has_new == 'true'
+        run: |
+          # 🔍 排查辅助：确认缓存的上游 body 文件是否存在
+          if [ -f "${RUNNER_TEMP}/upstream_body.md" ]; then
+            echo "✅ 已找到缓存文件: ${RUNNER_TEMP}/upstream_body.md ($(wc -c < "${RUNNER_TEMP}/upstream_body.md") bytes)"
+          else
+            echo "⚠️ 警告: 缓存文件不存在: ${RUNNER_TEMP}/upstream_body.md"
+          fi
+
+          UPSTREAM_BODY=$(cat "${RUNNER_TEMP}/upstream_body.md")
+
+          cat > release-body.md <<-'TEMPLATE_EOF'
+          ## 📦 Docker Image Mirror
+          TEMPLATE_EOF
+
+          {
+            echo "- **Version**: \`${{ steps.check_version.outputs.version }}\`"
+            echo "- **Image**: \`${DOCKER_IMAGE}:${{ steps.check_version.outputs.version }}\`"
+            echo "- **Source**: [Upstream Release](https://github.com/${UPSTREAM_REPO}/releases/tag/v${{ steps.check_version.outputs.version }})"
+            echo ""
+            echo "---"
+            echo ""
+            echo "${UPSTREAM_BODY}"
+            echo ""
+            echo "---"
+            echo ""
+            echo "### 🔐 校验信息"
+            echo "- **包名**: \`${IMAGE_SHORT}-${{ steps.check_version.outputs.version }}.tar.gz\`"
+            echo "- **SHA256**: \`${{ steps.file_sha.outputs.sha256 }}\`"
+            echo ""
+            echo "校验命令："
+            echo "\`\`\`bash"
+            echo "wget https://github.com/${{ github.repository }}/releases/download/v${{ steps.check_version.outputs.version }}/${IMAGE_SHORT}-${{ steps.check_version.outputs.version }}.tar.gz"
+            echo "echo \"${{ steps.file_sha.outputs.sha256 }}  ${IMAGE_SHORT}-${{ steps.check_version.outputs.version }}.tar.gz\" | sha256sum -c"
+            echo "\`\`\`"
+          } >> release-body.md
+
+      # 🚀 5. 创建 Release 并上传附件
+      - name: 创建 Release 并上传附件
         if: steps.check_version.outputs.has_new == 'true'
         uses: softprops/action-gh-release@v3
         with:
@@ -77,3 +121,11 @@ jobs:
           prerelease: false
           files: |
             *.tar.gz
+
+      # 📋 6. 触发索引更新（重建 README 发布索引表）
+      - name: 触发索引更新
+        if: steps.check_version.outputs.has_new == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run "update-index.yml" --repo "${{ github.repository }}"
