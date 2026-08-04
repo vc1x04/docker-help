@@ -4,7 +4,7 @@ name: 智能同步 QwenPaw 镜像（综合版）
 # 定时调度：北京时间每天凌晨 2:00 (UTC 18:00)
 on:
   schedule:
-    - cron: '0 18 * * *'
+    - cron: '5 18 * * *'
   workflow_dispatch:
     inputs:
       # 强制重新同步：忽略 digest 判断，用于调试/重跑
@@ -167,7 +167,7 @@ jobs:
       - name: 组装 Release 说明
         if: steps.check_version.outputs.has_new == 'true'
         run: |
-          cat > release-body.md <<'TEMPLATE_EOF'
+          cat > release-body.md <<-'TEMPLATE_EOF'
           ## 📦 Docker Image Mirror
           TEMPLATE_EOF
           {

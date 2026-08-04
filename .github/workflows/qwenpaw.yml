@@ -3,7 +3,7 @@ name: 智能发布 QwenPaw 离线包（压缩版）
 on:
   schedule:
     # 北京时间每天凌晨 2:00 (UTC 18:00)
-    - cron: '0 18 * * *'
+    - cron: '5 18 * * *'
   workflow_dispatch:
 
 jobs:
@@ -94,6 +94,7 @@ jobs:
               echo "$BODY" >> /tmp/official_changelog.md
               echo "log_source=最新 Release (${TAG})" >> $GITHUB_OUTPUT
             else
+              echo "暂无官方更新日志。"
               echo "暂无官方更新日志。" > /tmp/official_changelog.md
               echo "log_source=无" >> $GITHUB_OUTPUT
             fi

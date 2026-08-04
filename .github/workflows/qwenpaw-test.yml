@@ -10,7 +10,7 @@ on:
         default: false
         type: boolean
   # schedule:  # 测试用，暂不启用定时触发，避免与正式 qwenpaw.yml 冲突
-  #   - cron: '0 0 * * *'  # UTC 00:00 每日触发
+  #   - cron: '5 0 * * *'  # UTC 00:00 每日触发
 
 permissions:
   contents: write
