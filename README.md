@@ -4,6 +4,7 @@
 | 镜像 | 最新版本 | 更新时间 | Release |
 |------|---------|---------|--------|
 | AdGuard Home | 0.107.78 | 2026-07-13 | [View](../../releases/tag/v0.107.78) |
+| dpanel/dpanel | 1.10.6 | 2026-08-04 | [View](../../releases/tag/v1.10.6) |
 | freshrss/freshrss | 1.29.1 | 2026-08-01 | [View](../../releases/tag/v1.29.1) |
 | ghcr.io/openclaw/openclaw | 2026.7.1 | 2026-08-03 | [View](../../releases/tag/v2026.7.1) |
 | neosmemo/memos | 0.30.0 | 2026-08-02 | [View](../../releases/tag/v0.30.0) |
