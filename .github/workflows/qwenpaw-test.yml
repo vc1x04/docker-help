@@ -2,6 +2,15 @@ name: Download qwenpaw-test Image
 
 on:
   workflow_dispatch:
+    inputs:
+      # 强制重新同步：忽略 digest 判断，用于调试/重跑
+      force:
+        description: '强制重新同步（忽略 digest 判断）'
+        required: false
+        default: false
+        type: boolean
+  # schedule:  # 测试用，暂不启用定时触发，避免与正式 qwenpaw.yml 冲突
+  #   - cron: '0 0 * * *'  # UTC 00:00 每日触发
 
 permissions:
   contents: write
@@ -34,11 +43,14 @@ jobs:
         id: check_version
         run: |
           BRANCH="${GITHUB_REF_NAME:-main}"
-          # 状态文件自动推导：默认 .github/workflows/<镜像名>-latest.digest
-          STATE_FILE="${STATE_FILE:-.github/workflows/${DOCKER_IMAGE##*/}-latest.digest}"
+          # [修复-4] 状态文件自动推导：默认 .github/workflows/<镜像名>-<workflow>-latest.digest
+          # 加入 workflow 名净化后缀，避免多个 workflow 同步同一镜像时共用/互相覆盖状态文件
+          WF_NAME="${{ github.workflow }}"
+          WF_SUFFIX=$(echo "$WF_NAME" | tr -cs '[:alnum:]' '_' | tr '[:upper:]' '[:lower:]')
+          STATE_FILE="${STATE_FILE:-.github/workflows/${DOCKER_IMAGE##*/}-${WF_SUFFIX}-latest.digest}"
           echo "state_file=${STATE_FILE}" >> "$GITHUB_OUTPUT"
 
-          # 统一：检查目标 tag 是否已发布（两种模式共用）
+          # [修复-2] 统一：检查目标 tag 是否已发布（两种模式共用）
           check_published() {
             local tag="v$1"
             local code
@@ -74,12 +86,13 @@ jobs:
             echo "上次 digest: ${LAST_DIGEST:-<无记录>}"
             echo "mode=latest" >> "$GITHUB_OUTPUT"
             echo "digest=${UP_DIGEST}" >> "$GITHUB_OUTPUT"
-            if [ "$UP_DIGEST" = "$LAST_DIGEST" ]; then
+            if [ "$UP_DIGEST" = "$LAST_DIGEST" ] && [ "${FORCE:-false}" != "true" ]; then
               echo "digest 未变化，跳过拉取。"
               echo "has_new=false" >> "$GITHUB_OUTPUT"
             else
-              echo "digest 已变化，拉取镜像并提取版本号。"
+              echo "digest 已变化或已强制触发，拉取镜像并提取版本号。"
               docker pull "${DOCKER_IMAGE}:latest"
+              # [修复-5] 版本提取命令改为可配置的 PYPI_PACKAGE，换镜像不用改代码
               RAW=$(docker run --rm "${DOCKER_IMAGE}:latest" pip show "${PYPI_PACKAGE}" 2>/dev/null | awk '/^Version: /{print $2}')
               if [ -z "$RAW" ]; then
                 RAW=$(docker run --rm "${DOCKER_IMAGE}:latest" python -c "from importlib.metadata import version; print(version('${PYPI_PACKAGE}'))" 2>/dev/null)
@@ -88,6 +101,7 @@ jobs:
               VERSION="${RAW#v}"
               echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
               echo "pull_tag=latest" >> "$GITHUB_OUTPUT"
+              # [修复-1] 标记镜像已在 Step 1 拉取，Step 4 不再重复 pull
               echo "already_pulled=true" >> "$GITHUB_OUTPUT"
               if check_published "$VERSION"; then
                 echo "has_new=false" >> "$GITHUB_OUTPUT"
@@ -103,6 +117,9 @@ jobs:
           fi
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          # workflow_dispatch 有 default:false；schedule 触发时 inputs 为空，
+          # 用 || 'false' 兜底，保证两种触发下 FORCE 恒为 false 或 true
+          FORCE: ${{ inputs.force || 'false' }}
 
       # 📝 2. 组装 Release 说明（changelog 按模式取值）
       - name: 组装 Release 说明
@@ -112,11 +129,14 @@ jobs:
             UPSTREAM_BODY=$(curl -s "https://api.github.com/repos/${UPSTREAM_REPO}/releases/latest" |
               jq -r '.body')
             [ "$UPSTREAM_BODY" = "null" ] && UPSTREAM_BODY="*No release notes provided by upstream.*"
+            DIGEST_LINE=""
           else
             UPSTREAM_BODY="*Rolling latest 镜像，无固定版本 Release 说明。*"
+            # latest 模式写入 manifest digest，便于追溯具体镜像版本
+            DIGEST_LINE="- **Digest**: \`${{ steps.check_version.outputs.digest }}\`"
           fi
 
-          # Source 链接保护：latest 模式 UPSTREAM_REPO 为空时输出占位说明
+          # [修复-6] Source 链接保护：latest 模式 UPSTREAM_REPO 为空时输出占位说明
           if [ -n "${UPSTREAM_REPO}" ]; then
             SOURCE_LINE="- **Source**: [Upstream](https://github.com/${UPSTREAM_REPO})"
           else
@@ -130,6 +150,9 @@ jobs:
             echo "- **Version**: \`v${{ steps.check_version.outputs.version }}\`"
             echo "- **Image**: \`${DOCKER_IMAGE}:${{ steps.check_version.outputs.pull_tag }}\`"
             echo "${SOURCE_LINE}"
+            if [ -n "$DIGEST_LINE" ]; then
+              echo "${DIGEST_LINE}"
+            fi
             echo ""
             echo "---"
             echo ""
@@ -174,22 +197,51 @@ jobs:
           STATE_FILE="${{ steps.check_version.outputs.state_file }}"
           UP_DIGEST="${{ steps.check_version.outputs.digest }}"
 
-          echo "$UP_DIGEST" > "$STATE_FILE"
-
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # 修复 detached HEAD：显式检出目标分支再提交
-          git checkout "${BRANCH}" 2>/dev/null || git checkout -b "${BRANCH}"
+          # [修复-3] 修复 detached HEAD 与并发冲突隐患：
+          # 状态文件每次全量覆盖、无需保留旧提交，直接以远端为基准重建本地分支，
+          # 避免原 rebase 命令失败被 `|| true` 吞掉后留下冲突/中断态
+          git fetch origin "${BRANCH}"
+          git checkout -B "${BRANCH}" "origin/${BRANCH}"
+
+          echo "$UP_DIGEST" > "$STATE_FILE"
 
           git add "$STATE_FILE"
           if git diff --cached --quiet; then
             echo "状态文件无变更，跳过提交。"
           else
             git commit -m "chore: update ${DOCKER_IMAGE} latest digest"
-            # 修复并发冲突：先 rebase 再推送，push 到显式 ref
-            git pull --rebase --autostash origin "${BRANCH}" 2>/dev/null || true
-            git push origin "HEAD:${BRANCH}"
+            # push 失败重试：并发下可能 non-fast-forward，先重新 fetch 再重试，最多 3 次
+            RETRY=0
+            while [ "$RETRY" -lt 3 ]; do
+              if git push origin "${BRANCH}"; then
+                echo "✅ 推送成功。"
+                break
+              fi
+              RETRY=$((RETRY + 1))
+              echo "⚠️ 第 ${RETRY} 次推送失败，重新 fetch 远端后重试..."
+              # 重置到远端最新，重新写入状态文件再提交，保证 digest 更新不丢失
+              git fetch origin "${BRANCH}"
+              git checkout -B "${BRANCH}" "origin/${BRANCH}"
+              echo "$UP_DIGEST" > "$STATE_FILE"
+              git add "$STATE_FILE"
+              # 远端可能已被其他 run 写入相同 digest，重试前先判断有无变更，
+              # 避免 git commit 因 "nothing to commit" 返回非零退出码
+              if git diff --cached --quiet; then
+                # 远端已是最新，digest 已同步到位，目标达成，直接结束，避免多余 push
+                echo "远端已是最新，digest 已同步，无需再 push。"
+                break
+              else
+                git commit -m "chore: update ${DOCKER_IMAGE} latest digest (retry)"
+              fi
+            done
+            # 重试耗尽仍失败则显式报错，避免静默丢失 digest 更新
+            if [ "$RETRY" -ge 3 ]; then
+              echo "❌ 推送连续失败 3 次。"
+              exit 1
+            fi
           fi
         env:
           GH_TOKEN: ${{ github.token }}
