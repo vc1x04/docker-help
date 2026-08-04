@@ -1,7 +1,10 @@
 name: 智能同步 QwenPaw 镜像（综合版）
 
 # ====== 触发方式 ======
+# 定时调度：北京时间每天凌晨 2:00 (UTC 18:00)
 on:
+  schedule:
+    - cron: '0 18 * * *'
   workflow_dispatch:
     inputs:
       # 强制重新同步：忽略 digest 判断，用于调试/重跑
@@ -10,9 +13,6 @@ on:
         required: false
         default: false
         type: boolean
-  # 定时同步：北京时间每天凌晨 2:00 (UTC 18:00)
-  schedule:
-    - cron: '0 18 * * *'
 
 permissions:
   contents: write
@@ -34,8 +34,6 @@ jobs:
       PYPI_PACKAGE: "qwenpaw"
       # 状态文件（记录上次 latest digest）。留空则由 DOCKER_IMAGE 自动推导，不用手动改
       STATE_FILE: ""
-      # 离线包文件名前缀（默认取镜像短名，如 agentscope/qwenpaw -> qwenpaw）
-      FILE_PREFIX: ""
       # =========================
 
     steps:
@@ -47,7 +45,7 @@ jobs:
         id: check_version
         run: |
           BRANCH="${GITHUB_REF_NAME:-main}"
-          # [修复-4] 状态文件自动推导：默认 <镜像名>-<workflow>-latest.digest（仓库根目录）
+          # 状态文件自动推导：默认 <镜像名>-<workflow>-latest.digest（仓库根目录）
           # 不放在 .github/workflows/ 下，避免修改该目录需 workflows 权限而被 GITHUB_TOKEN 拒绝
           # 加入 workflow 名净化后缀，避免多个 workflow 同步同一镜像时共用/互相覆盖状态文件
           WF_NAME="${{ github.workflow }}"
@@ -55,7 +53,7 @@ jobs:
           STATE_FILE="${STATE_FILE:-${DOCKER_IMAGE##*/}-${WF_SUFFIX}-latest.digest}"
           echo "state_file=${STATE_FILE}" >> "$GITHUB_OUTPUT"
 
-          # [修复-2] 统一：检查目标 tag 是否已发布（两种模式共用）
+          # 统一：检查目标 tag 是否已发布（两种模式共用）
           check_published() {
             local tag="v$1"
             local code
@@ -97,7 +95,7 @@ jobs:
             else
               echo "digest 已变化或已强制触发，拉取镜像并提取版本号。"
               docker pull "${DOCKER_IMAGE}:latest"
-              # [修复-5] 版本提取命令改为可配置的 PYPI_PACKAGE，换镜像不用改代码
+              # 版本提取命令改为可配置的 PYPI_PACKAGE，换镜像不用改代码
               RAW=$(docker run --rm "${DOCKER_IMAGE}:latest" pip show "${PYPI_PACKAGE}" 2>/dev/null | awk '/^Version: /{print $2}')
               if [ -z "$RAW" ]; then
                 RAW=$(docker run --rm "${DOCKER_IMAGE}:latest" python -c "from importlib.metadata import version; print(version('${PYPI_PACKAGE}'))" 2>/dev/null)
@@ -106,7 +104,7 @@ jobs:
               VERSION="${RAW#v}"
               echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
               echo "pull_tag=latest" >> "$GITHUB_OUTPUT"
-              # [修复-1] 标记镜像已在 Step 1 拉取，Step 3 不再重复 pull
+              # 标记镜像已在 Step 1 拉取，Step 3 不再重复 pull
               echo "already_pulled=true" >> "$GITHUB_OUTPUT"
               if check_published "$VERSION"; then
                 echo "has_new=false" >> "$GITHUB_OUTPUT"
@@ -126,45 +124,7 @@ jobs:
           # 用 || 'false' 兜底，保证两种触发下 FORCE 恒为 false 或 true
           FORCE: ${{ inputs.force || 'false' }}
 
-      # ⬇️ 2. 导出镜像并压缩（qwenpaw.yml 优点：pigz 并行压缩 + SHA256 + RepoDigest）
-      - name: 导出镜像并压缩
-        id: export
-        if: steps.check_version.outputs.has_new == 'true'
-        run: |
-          VERSION="${{ steps.check_version.outputs.version }}"
-          PULL_TAG="${{ steps.check_version.outputs.pull_tag }}"
-          FILE_PREFIX="${FILE_PREFIX:-${DOCKER_IMAGE##*/}}"
-          TARBALL="${FILE_PREFIX}-${VERSION}.tar.gz"
-
-          # 若 Step 1 已拉取则跳过，避免重复 pull
-          if [ "${{ steps.check_version.outputs.already_pulled }}" != "true" ]; then
-            echo "拉取镜像 ${DOCKER_IMAGE}:${PULL_TAG}"
-            docker pull "${DOCKER_IMAGE}:${PULL_TAG}"
-          else
-            echo "镜像已在 Step 1 拉取，跳过重复 pull。"
-          fi
-
-          # 安装 pigz 并行压缩工具（标准 runner 无此包）
-          sudo apt-get update -qq && sudo apt-get install -y -qq pigz >/dev/null 2>&1 || true
-
-          # pigz 并行压缩，速度快
-          docker save "${DOCKER_IMAGE}:${PULL_TAG}" | pigz > "${TARBALL}"
-          echo "已压缩打包为 ${TARBALL}"
-
-          # 获取上游镜像 RepoDigest（用于校验信息与发布说明）
-          REPO_DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "${DOCKER_IMAGE}:${PULL_TAG}" 2>/dev/null || echo "")
-          echo "上游镜像摘要: ${REPO_DIGEST}"
-
-          # 计算压缩包 SHA256
-          SHA=$(sha256sum "${TARBALL}" | awk '{print $1}')
-          echo "压缩包 SHA256: ${SHA}"
-
-          echo "tarball=${TARBALL}" >> "$GITHUB_OUTPUT"
-          echo "repo_digest=${REPO_DIGEST}" >> "$GITHUB_OUTPUT"
-          echo "sha256=${SHA}" >> "$GITHUB_OUTPUT"
-          echo "prefix=${FILE_PREFIX}" >> "$GITHUB_OUTPUT"
-
-      # 📋 3. 获取官方 changelog（qwenpaw.yml 优点：按版本匹配 → 回退最新）
+      # 📋 2. 获取官方 changelog（qwenpaw.yml 优点：按版本匹配 → 回退最新）
       - name: 获取官方更新日志
         id: changelog
         if: steps.check_version.outputs.has_new == 'true'
@@ -173,7 +133,7 @@ jobs:
           OFFICIAL_REPO="${UPSTREAM_REPO}"
           if [ -z "$OFFICIAL_REPO" ]; then
             echo "未配置 UPSTREAM_REPO，无法获取官方日志。"
-            echo "source=无" >> "$GITHUB_OUTPUT"
+            echo "log_source=无" >> "$GITHUB_OUTPUT"
             echo "无官方更新日志。" > /tmp/official_changelog.md
             exit 0
           fi
@@ -183,7 +143,7 @@ jobs:
           if [ -n "$RELEASE_BODY" ]; then
             echo "成功获取 ${VERSION} 的日志。"
             echo "$RELEASE_BODY" > /tmp/official_changelog.md
-            echo "source=对应版本 (${VERSION})" >> "$GITHUB_OUTPUT"
+            echo "log_source=对应版本" >> "$GITHUB_OUTPUT"
           else
             echo "未找到 ${VERSION} 的 Release，尝试最新 Release..."
             LATEST=$(gh api "repos/${OFFICIAL_REPO}/releases/latest" --jq '{tag: .tag_name, body: .body}' 2>/dev/null)
@@ -193,35 +153,26 @@ jobs:
               echo "> ⚠️ 官方没有 ${VERSION} 对应的 Release，以下日志来自最新的 ${TAG}，仅供参考。" > /tmp/official_changelog.md
               echo "" >> /tmp/official_changelog.md
               echo "$BODY" >> /tmp/official_changelog.md
-              echo "source=最新 Release (${TAG})" >> "$GITHUB_OUTPUT"
+              echo "log_source=最新 Release (${TAG})" >> "$GITHUB_OUTPUT"
             else
               echo "暂无官方更新日志。"
               echo "无官方更新日志。" > /tmp/official_changelog.md
-              echo "source=无" >> "$GITHUB_OUTPUT"
+              echo "log_source=无" >> "$GITHUB_OUTPUT"
             fi
           fi
         env:
           GH_TOKEN: ${{ github.token }}
 
-      # 📝 4. 生成最终 Release 说明（qwenpaw.yml 优点：校验表 + 验证步骤 + 基础使用）
-      - name: 生成 Release 说明
-        id: generate_body
+      # 📝 3. 组装 Release 说明（头部信息 + 官方 changelog）
+      - name: 组装 Release 说明
         if: steps.check_version.outputs.has_new == 'true'
         run: |
-          VERSION="v${{ steps.check_version.outputs.version }}"
-          PULL_TAG="${{ steps.check_version.outputs.pull_tag }}"
-          TARBALL="${{ steps.export.outputs.tarball }}"
-          REPO_DIGEST="${{ steps.export.outputs.repo_digest }}"
-          SHA="${{ steps.export.outputs.sha256 }}"
-          FILE_PREFIX="${{ steps.export.outputs.prefix }}"
-
-          # —— 头部信息（来自 qwenpaw-test 逻辑）——
           cat > release-body.md <<'TEMPLATE_EOF'
           ## 📦 Docker Image Mirror
           TEMPLATE_EOF
           {
-            echo "- **Version**: \`${VERSION}\`"
-            echo "- **Image**: \`${DOCKER_IMAGE}:${PULL_TAG}\`"
+            echo "- **Version**: \`v${{ steps.check_version.outputs.version }}\`"
+            echo "- **Image**: \`${DOCKER_IMAGE}:${{ steps.check_version.outputs.pull_tag }}\`"
             if [ -n "${UPSTREAM_REPO}" ]; then
               echo "- **Source**: [Upstream](https://github.com/${UPSTREAM_REPO})"
             else
@@ -230,50 +181,30 @@ jobs:
             if [ "${{ steps.check_version.outputs.mode }}" = "latest" ]; then
               echo "- **Digest**: \`${{ steps.check_version.outputs.digest }}\`"
             fi
+            echo ""
+            echo "---"
+            echo ""
+            echo "## 📋 官方更新日志"
+            if [ -f /tmp/official_changelog.md ]; then
+              cat /tmp/official_changelog.md
+            else
+              echo "暂无官方更新日志。"
+            fi
           } >> release-body.md
 
-          # —— 官方更新日志 ——
-          echo "" >> release-body.md
-          echo "---" >> release-body.md
-          echo "" >> release-body.md
-          echo "## 📋 官方更新日志" >> release-body.md
-          if [ -f /tmp/official_changelog.md ]; then
-            cat /tmp/official_changelog.md >> release-body.md
+      # ⬇️ 4. 导出 Docker 镜像（latest 模式 Step 1 已拉取，仅 release 模式需拉取）
+      - name: 导出 Docker 镜像
+        if: steps.check_version.outputs.has_new == 'true'
+        run: |
+          VERSION="${{ steps.check_version.outputs.version }}"
+          PULL_TAG="${{ steps.check_version.outputs.pull_tag }}"
+          if [ "${{ steps.check_version.outputs.already_pulled }}" != "true" ]; then
+            echo "拉取镜像 ${DOCKER_IMAGE}:${PULL_TAG}"
+            docker pull "${DOCKER_IMAGE}:${PULL_TAG}"
           else
-            echo "暂无官方更新日志。" >> release-body.md
+            echo "镜像已在 Step 1 拉取，跳过重复 pull。"
           fi
-
-          # —— 校验信息（qwenpaw.yml 特色）——
-          cat >> release-body.md <<EOF
-
-          ## 🔐 校验信息
-          本离线包与 **Docker Hub 官方镜像完全一致**，请通过以下信息验证：
-
-          | 类型 | 值 |
-          |------|----|
-          | 上游镜像摘要 | \`${REPO_DIGEST}\` |
-          | 压缩包 SHA256 | \`${SHA}\` |
-
-          ### 验证步骤
-          1. 下载并校验压缩包完整性：
-             \`\`\`bash
-             wget https://github.com/${{ github.repository }}/releases/download/${VERSION}/${TARBALL}
-             echo "${SHA}  ${TARBALL}" | sha256sum -c
-             \`\`\`
-          2. 加载镜像并核对上游摘要：
-             \`\`\`bash
-             docker load -i ${TARBALL}
-             docker images --digests | grep ${DOCKER_IMAGE}
-             \`\`\`
-          3. 确认输出的摘要中包含 \`${REPO_DIGEST#*@}\` 即为官方原版。
-
-          ### 基础使用
-          \`\`\`bash
-          docker run -d --name ${DOCKER_IMAGE##*/} -p 8080:8080 ${DOCKER_IMAGE}:${PULL_TAG}
-          \`\`\`
-          EOF
-
-          echo "body_file=release-body.md" >> "$GITHUB_OUTPUT"
+          docker save "${DOCKER_IMAGE}:${PULL_TAG}" | gzip > "${DOCKER_IMAGE##*/}-${VERSION}.tar.gz"
 
       # 🚀 5. 创建 Release 并上传附件（复用）
       - name: 创建 Release 并上传附件
@@ -282,7 +213,7 @@ jobs:
         with:
           tag_name: v${{ steps.check_version.outputs.version }}
           name: "${{ env.DOCKER_IMAGE }} ${{ steps.check_version.outputs.version }}"
-          body_path: ${{ steps.generate_body.outputs.body_file }}
+          body_path: release-body.md
           overwrite_files: true
           fail_on_unmatched_files: true
           make_latest: "false"
@@ -304,7 +235,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # [修复-3] 修复 detached HEAD 与并发冲突隐患：
+          # 修复 detached HEAD 与并发冲突隐患：
           # 状态文件每次全量覆盖、无需保留旧提交，直接以远端为基准重建本地分支，
           # 避免原 rebase 命令失败被 `|| true` 吞掉后留下冲突/中断态
           git fetch origin "${BRANCH}"
