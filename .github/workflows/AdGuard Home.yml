@@ -25,7 +25,7 @@ jobs:
         run: |
           # ✅ [修复] 将管道符 | 放在行尾实现自然续行，替代脆弱的 \ 续行
           # 原因：\ 后若存在不可见空格/Tab 会导致 "syntax error near unexpected token '|'"
-          LATEST=$(curl -s "https://api.github.com/repos/${UPSTREAM_REPO}/releases/latest" |
+          LATEST=$(curl -s -H "Authorization: token ${{ github.token }}" "https://api.github.com/repos/${UPSTREAM_REPO}/releases/latest" |
             jq -r '.tag_name' |
             sed 's/^v//')
 
@@ -43,7 +43,7 @@ jobs:
             echo "version=${LATEST}" >> "$GITHUB_OUTPUT"
 
             # ✅ [修复] 同上，管道符行尾续行替代 \ 续行
-            UPSTREAM_BODY=$(curl -s "https://api.github.com/repos/${UPSTREAM_REPO}/releases/latest" |
+            UPSTREAM_BODY=$(curl -s -H "Authorization: token ${{ github.token }}" "https://api.github.com/repos/${UPSTREAM_REPO}/releases/latest" |
               jq -r '.body')
             [ "$UPSTREAM_BODY" = "null" ] && UPSTREAM_BODY="*No release notes provided by upstream.*"
 
