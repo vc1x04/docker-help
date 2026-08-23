@@ -13,6 +13,6 @@
 | nextcloud | 32.0.14 | 2026-08-15 | [View](../../releases/tag/v32.0.14) |
 | portainer/portainer-ce | 2.39.6 | 2026-08-13 | [View](../../releases/tag/v2.39.6) |
 | QwenPaw | 2.0.0.post4 | 2026-07-22 | [View](../../releases/tag/v2.0.0.post4) |
-| vaultwarden/server | 1.37.1 | 2026-08-01 | [View](../../releases/tag/v1.37.1) |
+| vaultwarden/server | 1.37.2 | 2026-08-23 | [View](../../releases/tag/v1.37.2) |
 
 <!-- AUTO-INDEX-END -->
