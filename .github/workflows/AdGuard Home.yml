@@ -57,7 +57,9 @@ jobs:
             # ✅ 动态内容单独追加：echo 的单变量参数不会被内容中的双引号撕裂
             {
               echo "- **Version**: \`${LATEST}\`"
-              echo "- **Image**: \`${DOCKER_IMAGE}:${LATEST}\`"
+              # [修复] Docker Hub tag 保留 v 前缀，与 GitHub release tag 一致，
+              # 避免 AdGuard Home 等镜像 tag 命名为 vX.Y.Z 而拉取失败
+              echo "- **Image**: \`${DOCKER_IMAGE}:v${LATEST}\`"
               echo "- **Source**: [Upstream Release](https://github.com/${UPSTREAM_REPO}/releases/tag/v${LATEST})"
               echo ""
               echo "---"
@@ -73,8 +75,11 @@ jobs:
         if: steps.check_version.outputs.has_new == 'true'
         run: |
           VERSION="${{ steps.check_version.outputs.version }}"
-          docker pull "${DOCKER_IMAGE}:${VERSION}"
-          docker save "${DOCKER_IMAGE}:${VERSION}" | gzip > "${DOCKER_IMAGE##*/}-${VERSION}.tar.gz"
+          # [修复] Docker Hub 镜像 tag 保留 v 前缀（与上游 release tag 一致）
+          # 如 adguard/adguardhome:v0.107.79，避免 manifest unknown
+          DOCKER_TAG="v${VERSION}"
+          docker pull "${DOCKER_IMAGE}:${DOCKER_TAG}"
+          docker save "${DOCKER_IMAGE}:${DOCKER_TAG}" | gzip > "${DOCKER_IMAGE##*/}-${VERSION}.tar.gz"
 
       # 🚀 3. 创建 Release 并上传附件
       - name: 创建 Release 并上传附件
