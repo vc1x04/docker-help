@@ -4,6 +4,7 @@
 | 镜像 | 最新版本 | 更新时间 | Release |
 |------|---------|---------|--------|
 | AdGuard Home | 0.107.78 | 2026-07-13 | [View](../../releases/tag/v0.107.78) |
+| adguard/adguardhome | 0.107.79 | 2026-08-24 | [View](../../releases/tag/v0.107.79) |
 | agentscope/qwenpaw | 2.0.1 | 2026-08-04 | [View](../../releases/tag/v2.0.1) |
 | dpanel/dpanel | 1.10.6 | 2026-08-04 | [View](../../releases/tag/v1.10.6) |
 | dpanel/dpanel lite | 1.10.6-lite | 2026-08-04 | [View](../../releases/tag/v1.10.6-lite) |
