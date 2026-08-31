@@ -9,7 +9,7 @@
 | dpanel/dpanel | 1.10.6 | 2026-08-04 | [View](../../releases/tag/v1.10.6) |
 | dpanel/dpanel lite | 1.10.6-lite | 2026-08-04 | [View](../../releases/tag/v1.10.6-lite) |
 | freshrss/freshrss | 1.29.1 | 2026-08-01 | [View](../../releases/tag/v1.29.1) |
-| ghcr.io/openclaw/openclaw | 2026.7.1-2 | 2026-08-04 | [View](../../releases/tag/v2026.7.1-2) |
+| ghcr.io/openclaw/openclaw | 2026.8.1 | 2026-08-31 | [View](../../releases/tag/v2026.8.1) |
 | neosmemo/memos | 0.30.0 | 2026-08-02 | [View](../../releases/tag/v0.30.0) |
 | nextcloud | 34.0.3 | 2026-08-25 | [View](../../releases/tag/v34.0.3) |
 | portainer/portainer-ce | 2.45.0 | 2026-08-27 | [View](../../releases/tag/v2.45.0) |
