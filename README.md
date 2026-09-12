@@ -6,7 +6,7 @@
 | AdGuard Home | 0.107.78 | 2026-07-13 | [View](../../releases/tag/v0.107.78) |
 | adguard/adguardhome | 0.107.79 | 2026-08-24 | [View](../../releases/tag/v0.107.79) |
 | agentscope/qwenpaw | 2.0.1 | 2026-08-04 | [View](../../releases/tag/v2.0.1) |
-| dpanel/dpanel | 1.10.8 | 2026-09-08 | [View](../../releases/tag/v1.10.8) |
+| dpanel/dpanel | 1.10.9 | 2026-09-12 | [View](../../releases/tag/v1.10.9) |
 | dpanel/dpanel lite | 1.10.9-lite | 2026-09-12 | [View](../../releases/tag/v1.10.9-lite) |
 | freshrss/freshrss | 1.30.0 | 2026-09-10 | [View](../../releases/tag/v1.30.0) |
 | ghcr.io/openclaw/openclaw | 2026.9.4 | 2026-09-11 | [View](../../releases/tag/v2026.9.4) |
