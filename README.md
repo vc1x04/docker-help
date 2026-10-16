@@ -11,7 +11,7 @@
 | freshrss/freshrss | 1.30.1 | 2026-10-06 | [View](../../releases/tag/v1.30.1) |
 | ghcr.io/openclaw/openclaw | 2026.10.3 | 2026-10-14 | [View](../../releases/tag/v2026.10.3) |
 | neosmemo/memos | 0.31.0 | 2026-09-20 | [View](../../releases/tag/v0.31.0) |
-| nextcloud | 35.0.1 | 2026-09-25 | [View](../../releases/tag/v35.0.1) |
+| nextcloud | 33.0.10 | 2026-10-16 | [View](../../releases/tag/v33.0.10) |
 | portainer/portainer-ce | 2.45.2 | 2026-10-08 | [View](../../releases/tag/v2.45.2) |
 | QwenPaw | 2.0.0.post4 | 2026-07-22 | [View](../../releases/tag/v2.0.0.post4) |
 | vaultwarden/server | 1.37.4 | 2026-10-06 | [View](../../releases/tag/v1.37.4) |
