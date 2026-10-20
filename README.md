@@ -8,7 +8,7 @@
 | agentscope/qwenpaw | 2.0.1 | 2026-08-04 | [View](../../releases/tag/v2.0.1) |
 | dpanel/dpanel | 1.11.1 | 2026-10-10 | [View](../../releases/tag/v1.11.1) |
 | dpanel/dpanel lite | 1.11.1-lite | 2026-10-10 | [View](../../releases/tag/v1.11.1-lite) |
-| freshrss/freshrss | 1.30.1 | 2026-10-06 | [View](../../releases/tag/v1.30.1) |
+| freshrss/freshrss | 1.30.2 | 2026-10-20 | [View](../../releases/tag/v1.30.2) |
 | ghcr.io/openclaw/openclaw | 2026.10.5 | 2026-10-19 | [View](../../releases/tag/v2026.10.5) |
 | neosmemo/memos | 0.31.0 | 2026-09-20 | [View](../../releases/tag/v0.31.0) |
 | nextcloud | 33.0.10 | 2026-10-16 | [View](../../releases/tag/v33.0.10) |
