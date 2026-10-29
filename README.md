@@ -7,7 +7,7 @@
 | adguard/adguardhome | 0.107.79 | 2026-08-24 | [View](../../releases/tag/v0.107.79) |
 | agentscope/qwenpaw | 2.0.1 | 2026-08-04 | [View](../../releases/tag/v2.0.1) |
 | dpanel/dpanel | 1.11.1 | 2026-10-10 | [View](../../releases/tag/v1.11.1) |
-| dpanel/dpanel lite | 1.11.1-lite | 2026-10-10 | [View](../../releases/tag/v1.11.1-lite) |
+| dpanel/dpanel lite | 1.11.2-lite | 2026-10-29 | [View](../../releases/tag/v1.11.2-lite) |
 | freshrss/freshrss | 1.30.4 | 2026-10-22 | [View](../../releases/tag/v1.30.4) |
 | ghcr.io/openclaw/openclaw | 2026.10.8 | 2026-10-28 | [View](../../releases/tag/v2026.10.8) |
 | neosmemo/memos | 0.31.0 | 2026-09-20 | [View](../../releases/tag/v0.31.0) |
