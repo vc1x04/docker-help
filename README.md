@@ -12,7 +12,7 @@
 | ghcr.io/openclaw/openclaw | 2026.11.5 | 2026-11-18 | [View](../../releases/tag/v2026.11.5) |
 | neosmemo/memos | 26.11.1 | 2026-11-16 | [View](../../releases/tag/v26.11.1) |
 | nextcloud | 33.0.11 | 2026-11-14 | [View](../../releases/tag/v33.0.11) |
-| portainer/portainer-ce | 2.45.3 | 2026-10-23 | [View](../../releases/tag/v2.45.3) |
+| portainer/portainer-ce | 2.45.4 | 2026-11-19 | [View](../../releases/tag/v2.45.4) |
 | QwenPaw | 2.0.0.post4 | 2026-07-22 | [View](../../releases/tag/v2.0.0.post4) |
 | vaultwarden/server | 1.37.5 | 2026-11-02 | [View](../../releases/tag/v1.37.5) |
 
