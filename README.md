@@ -5,6 +5,7 @@
 |------|------|---------|--------|
 | adguard/adguardhome | 1.0.0 | 2026-11-20 | [View](../../releases/tag/v1.0.0) |
 | agentscope/qwenpaw | 2.3.0.post1 | 2026-11-23 | [View](../../releases/tag/v2.3.0.post1) |
+| caddy | 2.11.9 | 2026-11-23 | [View](../../releases/tag/v2.11.9) |
 | dpanel/dpanel | 1.11.3 | 2026-11-23 | [View](../../releases/tag/v1.11.3) |
 | dpanel/dpanel | 1.11.3-lite | 2026-11-23 | [View](../../releases/tag/v1.11.3-lite) |
 | freshrss/freshrss | 1.31.0 | 2026-11-23 | [View](../../releases/tag/v1.31.0) |
