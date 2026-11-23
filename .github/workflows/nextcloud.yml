@@ -20,48 +20,60 @@ jobs:
       # 👆 ==========================================
 
     steps:
-      # 🔍 1. 版本比对 + 一次请求拉取上游更新日志
+      # 1. 版本比对 + 上游更新日志（只有 404 才算“未发布”，并预检镜像是否已上架）
       - name: 检查新版本并获取更新日志
         id: check_version
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # ✅ 单次请求同时取 tag 与 body，保证版本号与说明同源，避免错位
           RESP=$(curl -s -H "Authorization: token ${{ github.token }}" "https://api.github.com/repos/${UPSTREAM_REPO}/releases/latest")
           LATEST=$(echo "$RESP" | jq -r '.tag_name // empty' | sed 's/^v//')
-          [ -n "$LATEST" ] || { echo "❌ 无法获取上游版本号"; exit 1; }
+          [ -n "$LATEST" ] || { echo "❌ 无法获取上游版本号（API 可能被限流）"; exit 1; }
 
           TAG="v${LATEST}"
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
             -H "Authorization: token ${{ github.token }}" \
             "https://api.github.com/repos/${{ github.repository }}/releases/tags/${TAG}")
 
+          # 具体状态必须区分清楚：200=已发布，404=未发布，其它（403 限流 / 5xx）=状态未知
           if [ "$HTTP_CODE" = "200" ]; then
-            echo "has_new=false" >> "$GITHUB_OUTPUT"
-            echo "✅ Version ${LATEST} already exists, skipping."
-          else
-            # 🛡️ 校验 Docker Hub 上该版本镜像是否已就绪（tag 存在且包含 linux/amd64），
-            # 上游刚发版/镜像尚未上架/缺 amd64 清单时直接 pull 会失败，这里改为安全跳过，等待下次运行
-            if docker buildx imagetools inspect "${DOCKER_IMAGE}:${LATEST}" > "${RUNNER_TEMP}/img_inspect.txt" 2>/dev/null; then
-              if grep -q "Platform:" "${RUNNER_TEMP}/img_inspect.txt" && ! grep -q "linux/amd64" "${RUNNER_TEMP}/img_inspect.txt"; then
-                echo "has_new=false" >> "$GITHUB_OUTPUT"
-                echo "⏭️ 镜像 ${DOCKER_IMAGE}:${LATEST} 无 linux/amd64 架构，跳过本次，等待下次运行。"
-                exit 0
-              fi
-            else
+            OWNER=$(gh release view "$TAG" --repo "${{ github.repository }}" --json name --jq '.name' 2>/dev/null || echo "")
+            if [[ "$OWNER" == "$DOCKER_IMAGE "* ]]; then
               echo "has_new=false" >> "$GITHUB_OUTPUT"
-              echo "⏭️ 镜像 ${DOCKER_IMAGE}:${LATEST} 尚未上架（tag 不存在），跳过本次，等待下次运行。"
+              echo "✅ Version ${LATEST} already exists, skipping."
               exit 0
             fi
-
-            echo "has_new=true" >> "$GITHUB_OUTPUT"
-            echo "version=${LATEST}" >> "$GITHUB_OUTPUT"
-
-            # ✅ 与 tag 同源取 body，写入临时文件跨步骤保留
-            UPSTREAM_BODY=$(echo "$RESP" | jq -r '.body')
-            [ "$UPSTREAM_BODY" = "null" ] && UPSTREAM_BODY="*No release notes provided by upstream.*"
-            echo "$UPSTREAM_BODY" > "${RUNNER_TEMP}/upstream_body.md"
-            echo "🆕 New version found: ${LATEST}, changelog cached."
+            # 标签被其它镜像占用：不改名、不覆盖，只告警，留给人工处理
+            echo "has_new=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::标签 ${TAG} 已被其它镜像占用（${OWNER}），本镜像 ${LATEST} 未同步，需人工处理。"
+            exit 0
+          elif [ "$HTTP_CODE" != "404" ]; then
+            echo "has_new=false" >> "$GITHUB_OUTPUT"
+            echo "⏭️ 仓库接口返回 ${HTTP_CODE}（限流或异常），本次跳过，等待下次运行。"
+            exit 0
           fi
+
+          # 镜像就绪预检：上游刚发版 / 镜像还没上架 / 缺 amd64 时，直接 pull 会失败，这里改为安全跳过
+          if docker buildx imagetools inspect "${DOCKER_IMAGE}:${LATEST}" > "${RUNNER_TEMP}/img_inspect.txt" 2>/dev/null; then
+            if grep -q "Platform:" "${RUNNER_TEMP}/img_inspect.txt" && ! grep -q "linux/amd64" "${RUNNER_TEMP}/img_inspect.txt"; then
+              echo "has_new=false" >> "$GITHUB_OUTPUT"
+              echo "⏭️ 镜像 ${DOCKER_IMAGE}:${LATEST} 无 linux/amd64 架构，跳过本次，等待下次运行。"
+              exit 0
+            fi
+          else
+            echo "has_new=false" >> "$GITHUB_OUTPUT"
+            echo "⏭️ 镜像 ${DOCKER_IMAGE}:${LATEST} 尚未上架（tag 不存在），跳过本次，等待下次运行。"
+            exit 0
+          fi
+
+          echo "has_new=true" >> "$GITHUB_OUTPUT"
+          echo "version=${LATEST}" >> "$GITHUB_OUTPUT"
+
+          UPSTREAM_BODY=$(echo "$RESP" | jq -r '.body')
+          [ "$UPSTREAM_BODY" = "null" ] && UPSTREAM_BODY="*No release notes provided by upstream.*"
+          echo "$UPSTREAM_BODY" > "${RUNNER_TEMP}/upstream_body.md"
+          echo "🆕 New version found: ${LATEST}, changelog cached."
 
       # ⬇️ 2. 仅在有新版时拉取并导出镜像
       - name: 拉取并导出 Docker 镜像
@@ -70,7 +82,7 @@ jobs:
           set -euo pipefail
           VERSION="${{ steps.check_version.outputs.version }}"
           docker pull "${DOCKER_IMAGE}:${VERSION}"
-          docker save "${DOCKER_IMAGE}:${VERSION}" | gzip > "${IMAGE_SHORT}-${VERSION}.tar.gz"
+          docker save "${DOCKER_IMAGE}:${VERSION}" > "${IMAGE_SHORT}-${VERSION}.tar"
 
       # 🔐 3. 计算导出包 SHA256（供用户校验下载完整性）
       - name: 计算镜像包 SHA256
@@ -78,7 +90,7 @@ jobs:
         id: file_sha
         run: |
           VERSION="${{ steps.check_version.outputs.version }}"
-          SHA=$(sha256sum "${IMAGE_SHORT}-${VERSION}.tar.gz" | awk '{print $1}')
+          SHA=$(sha256sum "${IMAGE_SHORT}-${VERSION}.tar" | awk '{print $1}')
           echo "sha256=${SHA}" >> "$GITHUB_OUTPUT"
 
       # 📝 4. 组装 Release 说明（此时 version 与 SHA 均已就绪）
@@ -110,13 +122,13 @@ jobs:
             echo "---"
             echo ""
             echo "### 🔐 校验信息"
-            echo "- **包名**: \`${IMAGE_SHORT}-${{ steps.check_version.outputs.version }}.tar.gz\`"
+            echo "- **包名**: \`${IMAGE_SHORT}-${{ steps.check_version.outputs.version }}.tar\`"
             echo "- **SHA256**: \`${{ steps.file_sha.outputs.sha256 }}\`"
             echo ""
             echo "校验命令："
             echo "\`\`\`bash"
-            echo "wget https://github.com/${{ github.repository }}/releases/download/v${{ steps.check_version.outputs.version }}/${IMAGE_SHORT}-${{ steps.check_version.outputs.version }}.tar.gz"
-            echo "echo \"${{ steps.file_sha.outputs.sha256 }}  ${IMAGE_SHORT}-${{ steps.check_version.outputs.version }}.tar.gz\" | sha256sum -c"
+            echo "wget https://github.com/${{ github.repository }}/releases/download/v${{ steps.check_version.outputs.version }}/${IMAGE_SHORT}-${{ steps.check_version.outputs.version }}.tar"
+            echo "echo \"${{ steps.file_sha.outputs.sha256 }}  ${IMAGE_SHORT}-${{ steps.check_version.outputs.version }}.tar\" | sha256sum -c"
             echo "\`\`\`"
           } >> release-body.md
 
@@ -134,7 +146,7 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            *.tar.gz
+            *.tar
 
       # 📋 6. 触发索引更新（重建 README 发布索引表）
       - name: 触发索引更新
