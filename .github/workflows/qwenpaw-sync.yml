@@ -204,7 +204,7 @@ jobs:
           else
             echo "镜像已在 Step 1 拉取，跳过重复 pull。"
           fi
-          docker save "${DOCKER_IMAGE}:${PULL_TAG}" | gzip > "${DOCKER_IMAGE##*/}-${VERSION}.tar.gz"
+          docker save "${DOCKER_IMAGE}:${PULL_TAG}" > "${DOCKER_IMAGE##*/}-${VERSION}.tar"
 
       # 🚀 5. 创建 Release 并上传附件（复用）
       - name: 创建 Release 并上传附件
@@ -220,7 +220,7 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            *.tar.gz
+            *.tar
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
