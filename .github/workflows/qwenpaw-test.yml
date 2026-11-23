@@ -36,7 +36,7 @@ jobs:
 
     steps:
       - name: Checkout 仓库
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # 🔍 1. 检测版本（按 SYNC_MODE 自动分流 + 统一已发布检查）
       - name: 检测版本
