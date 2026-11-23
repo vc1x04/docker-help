@@ -33,7 +33,7 @@ jobs:
       # 镜像内 Python 包名（用于提取版本号，可按镜像修改）
       PYPI_PACKAGE: "qwenpaw"
       # 状态文件（记录上次 latest digest）。留空则由 DOCKER_IMAGE 自动推导，不用手动改
-      STATE_FILE: ""
+      STATE_FILE: "qwenpaw-latest.digest"
       # =========================
 
     steps:
