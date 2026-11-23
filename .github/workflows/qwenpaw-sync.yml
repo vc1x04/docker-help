@@ -280,3 +280,11 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ github.token }}
+
+      # 📋 5. 触发索引更新（重建 README 发布索引表）
+      - name: 触发索引更新
+        if: steps.check_version.outputs.has_new == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run "update-index.yml" --repo "${{ github.repository }}"
