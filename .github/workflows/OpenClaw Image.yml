@@ -15,7 +15,6 @@ jobs:
     env:
       # 👇 ====== 仅需修改以下三行即可适配新镜像 ======
       DOCKER_IMAGE: "openclaw/openclaw"                # Docker Hub 镜像全名
-      LEGACY_IMAGE_NAMES: "ghcr.io/openclaw/openclaw"  # 历史发布物用过的镜像名，仅用于归属校验
       UPSTREAM_REPO: "openclaw/openclaw"     # 对应的 GitHub 仓库 (owner/repo)
       IMAGE_SHORT: "openclaw"                # 导出文件名用，取镜像名最后一段
       # 👆 ==========================================
@@ -40,7 +39,7 @@ jobs:
           # 具体状态必须区分清楚：200=已发布，404=未发布，其它（403 限流 / 5xx）=状态未知
           if [ "$HTTP_CODE" = "200" ]; then
             OWNER=$(gh release view "$TAG" --repo "${{ github.repository }}" --json name --jq '.name' 2>/dev/null || echo "")
-            if [[ "$OWNER" == "$DOCKER_IMAGE "* || "$OWNER" == "$LEGACY_IMAGE_NAMES "* ]]; then
+            if [[ "$OWNER" == "$DOCKER_IMAGE "* ]]; then
               echo "has_new=false" >> "$GITHUB_OUTPUT"
               echo "✅ Version ${LATEST} already exists, skipping."
               exit 0
