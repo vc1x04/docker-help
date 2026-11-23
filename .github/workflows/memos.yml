@@ -3,7 +3,7 @@ name: Download memos Image
 on:
   workflow_dispatch:
   schedule:
-    - cron: '35 0 * * *'  # UTC 00:00 每日触发
+    - cron: '35 0 * * *'  # UTC 00:35 每日触发
 
 permissions:
   contents: write
@@ -16,7 +16,7 @@ jobs:
       # 👇 ====== 仅需修改以下三行即可适配新镜像 ======
       DOCKER_IMAGE: "neosmemo/memos"       # Docker Hub 镜像全名
       UPSTREAM_REPO: "usememos/memos"     # 对应的 GitHub 仓库 (owner/repo)
-      IMAGE_SHORT: "neosmemo"                # 导出文件名用，取镜像名最后一段
+      IMAGE_SHORT: "memos"                # 导出文件名用，取镜像名最后一段
       # 👆 ==========================================
 
     steps:

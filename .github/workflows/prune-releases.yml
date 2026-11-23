@@ -2,7 +2,7 @@ name: Prune Old Releases
 
 on:
   schedule:
-    - cron: '20 19 * * *'  # UTC 19:20，等所有同步流（18:05–18:45）跑完之后
+    - cron: '20 19 * * *'  # UTC 19:20 每日触发
   workflow_dispatch:
     inputs:
       keep:
