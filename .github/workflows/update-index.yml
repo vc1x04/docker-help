@@ -46,7 +46,7 @@ jobs:
           git add README.md
           if ! git diff --cached --quiet; then
             git commit -m "docs: auto-update release index table"
-            git push origin "$BRANCH" # 🔑 显式指定推送目标分支
+            git push origin "$BRANCH" # 🔑 修复3: 显式指定推送目标分支
           else
             echo "No changes to commit"
           fi

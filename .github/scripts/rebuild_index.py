@@ -53,7 +53,7 @@ for rel in releases:
 
     name = (rel.get('name') or tag).strip()
     if how == 'marker':
-        # 标识里的镜像是规范写法，直接用它当显示名
+        # 正文/标识里的镜像是规范写法，直接用它当显示名
         display = key
     else:
         display = name.rsplit(' ', 1)[0].strip() if ' ' in name else name.strip()
