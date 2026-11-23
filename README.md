@@ -4,7 +4,7 @@
 | 镜像 | 标签 | 更新时间 | Release |
 |------|------|---------|--------|
 | adguard/adguardhome | 1.0.0 | 2026-11-20 | [View](../../releases/tag/v1.0.0) |
-| agentscope/qwenpaw | 2.0.1 | 2026-08-04 | [View](../../releases/tag/v2.0.1) |
+| agentscope/qwenpaw | 2.3.0.post1 | 2026-11-23 | [View](../../releases/tag/v2.3.0.post1) |
 | dpanel/dpanel | 1.11.3 | 2026-11-23 | [View](../../releases/tag/v1.11.3) |
 | dpanel/dpanel | 1.11.3-lite | 2026-11-23 | [View](../../releases/tag/v1.11.3-lite) |
 | freshrss/freshrss | 1.31.0 | 2026-11-23 | [View](../../releases/tag/v1.31.0) |
