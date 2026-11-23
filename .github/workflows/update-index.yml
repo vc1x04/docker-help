@@ -29,7 +29,10 @@ jobs:
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE"
-          gh release list --limit 100 --json tagName,publishedAt,name > /tmp/releases_raw.json
+          # 分页取全部 release（不再被 100 条上限截断），并带上正文里的镜像标识
+          gh api --paginate \
+            --jq '.[] | {tagName: .tag_name, publishedAt: .published_at, name: .name, body: .body}' \
+            "repos/${{ github.repository }}/releases?per_page=100" > /tmp/releases_raw.json
           python3 .github/scripts/rebuild_index.py
 
       - name: Commit and push changes
