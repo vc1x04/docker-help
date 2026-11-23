@@ -98,7 +98,7 @@ jobs:
           # 如 adguard/adguardhome:v0.107.79，避免 manifest unknown
           DOCKER_TAG="v${VERSION}"
           docker pull "${DOCKER_IMAGE}:${DOCKER_TAG}"
-          docker save "${DOCKER_IMAGE}:${DOCKER_TAG}" | gzip > "${DOCKER_IMAGE##*/}-${VERSION}.tar.gz"
+          docker save "${DOCKER_IMAGE}:${DOCKER_TAG}" > "${DOCKER_IMAGE##*/}-${VERSION}.tar"
 
       # 🚀 3. 创建 Release 并上传附件
       - name: 创建 Release 并上传附件
@@ -114,7 +114,7 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            *.tar.gz
+            *.tar
 
       # 📋 4. 触发 index 更新（重建 README 发布索引表）
       - name: 触发索引更新
