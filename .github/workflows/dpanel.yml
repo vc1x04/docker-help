@@ -82,7 +82,7 @@ jobs:
           set -euo pipefail
           VERSION="${{ steps.check_version.outputs.version }}"
           docker pull "${DOCKER_IMAGE}:${VERSION}"
-          docker save "${DOCKER_IMAGE}:${VERSION}" | gzip > "${IMAGE_SHORT}-${VERSION}.tar.gz"
+          docker save "${DOCKER_IMAGE}:${VERSION}" > "${IMAGE_SHORT}-${VERSION}.tar"
 
       # 🔐 3. 计算导出包 SHA256（供用户校验下载完整性）
       - name: 计算镜像包 SHA256
@@ -90,7 +90,7 @@ jobs:
         id: file_sha
         run: |
           VERSION="${{ steps.check_version.outputs.version }}"
-          SHA=$(sha256sum "${IMAGE_SHORT}-${VERSION}.tar.gz" | awk '{print $1}')
+          SHA=$(sha256sum "${IMAGE_SHORT}-${VERSION}.tar" | awk '{print $1}')
           echo "sha256=${SHA}" >> "$GITHUB_OUTPUT"
 
       # 📝 4. 组装 Release 说明（此时 version 与 SHA 均已就绪）
@@ -122,13 +122,13 @@ jobs:
             echo "---"
             echo ""
             echo "### 🔐 校验信息"
-            echo "- **包名**: \`${IMAGE_SHORT}-${{ steps.check_version.outputs.version }}.tar.gz\`"
+            echo "- **包名**: \`${IMAGE_SHORT}-${{ steps.check_version.outputs.version }}.tar\`"
             echo "- **SHA256**: \`${{ steps.file_sha.outputs.sha256 }}\`"
             echo ""
             echo "校验命令："
             echo "\`\`\`bash"
-            echo "wget https://github.com/${{ github.repository }}/releases/download/v${{ steps.check_version.outputs.version }}/${IMAGE_SHORT}-${{ steps.check_version.outputs.version }}.tar.gz"
-            echo "echo \"${{ steps.file_sha.outputs.sha256 }}  ${IMAGE_SHORT}-${{ steps.check_version.outputs.version }}.tar.gz\" | sha256sum -c"
+            echo "wget https://github.com/${{ github.repository }}/releases/download/v${{ steps.check_version.outputs.version }}/${IMAGE_SHORT}-${{ steps.check_version.outputs.version }}.tar"
+            echo "echo \"${{ steps.file_sha.outputs.sha256 }}  ${IMAGE_SHORT}-${{ steps.check_version.outputs.version }}.tar\" | sha256sum -c"
             echo "\`\`\`"
           } >> release-body.md
 
@@ -146,7 +146,7 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            *.tar.gz
+            *.tar
 
       # 📋 6. 触发索引更新（重建 README 发布索引表）
       - name: 触发索引更新
