@@ -1,0 +1,48 @@
+name: Prune Old Releases
+
+on:
+  schedule:
+    - cron: '20 19 * * *'  # UTC 19:20，等所有同步流（18:05–18:45）跑完之后
+  workflow_dispatch:
+    inputs:
+      keep:
+        description: '每个镜像保留多少个版本'
+        required: false
+        default: '5'
+        type: string
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: prune-releases
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout 仓库
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 1
+
+      - name: 拉取全部发布记录并清理
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEEP: ${{ inputs.keep || '5' }}
+        run: |
+          set -euo pipefail
+          gh api --paginate \
+            --jq '.[] | {id: .id, tagName: .tag_name, publishedAt: .published_at, name: .name, body: .body}' \
+            "repos/${GITHUB_REPOSITORY}/releases?per_page=100" > /tmp/releases_raw.json
+          python3 .github/scripts/prune_releases.py
+
+      - name: 触发索引更新
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run "update-index.yml" --repo "${GITHUB_REPOSITORY}"
