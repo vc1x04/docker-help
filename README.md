@@ -12,7 +12,7 @@
 | louislam/uptime-kuma | 2.5.12 | 2026-11-23 | [View](../../releases/tag/v2.5.12) |
 | neosmemo/memos | 26.11.2 | 2026-11-23 | [View](../../releases/tag/v26.11.2) |
 | nextcloud | 35.0.3 | 2026-11-21 | [View](../../releases/tag/v35.0.3) |
-| openclaw/openclaw | 2026.11.7 | 2026-11-23 | [View](../../releases/tag/v2026.11.7) |
+| openclaw/openclaw | 2026.11.10 | 2026-11-25 | [View](../../releases/tag/v2026.11.10) |
 | portainer/portainer-ce | 2.45.4 | 2026-11-19 | [View](../../releases/tag/v2.45.4) |
 | syncthing/syncthing | 2.1.7 | 2026-11-23 | [View](../../releases/tag/v2.1.7) |
 | vaultwarden/server | 1.37.5 | 2026-11-02 | [View](../../releases/tag/v1.37.5) |
